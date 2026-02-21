@@ -14,7 +14,12 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
 
 # CAN bus — only builds on Linux
 [target.'cfg(target_os = "linux")'.dependencies]
 socketcan = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
