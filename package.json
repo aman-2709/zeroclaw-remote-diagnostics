@@ -1,0 +1,9 @@
+{
+  "name": "zeroclaw-remote-diagnostics",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter frontend dev",
+    "build": "pnpm --filter frontend build",
+    "check": "pnpm --filter frontend check"
+  }
+}

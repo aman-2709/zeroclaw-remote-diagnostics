@@ -1,0 +1,22 @@
+[package]
+name = "zc-fleet-agent"
+description = "Edge agent binary — ZeroClaw + CAN bus + MQTT + Ollama"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zc-fleet-agent"
+path = "src/main.rs"
+
+[dependencies]
+zc-protocol = { workspace = true }
+zc-canbus-tools = { workspace = true }
+zc-mqtt-channel = { workspace = true }
+zc-log-tools = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

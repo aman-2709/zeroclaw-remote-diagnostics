@@ -36,6 +36,19 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 - Natural-language command interface for operators
 - Read-only CAN bus mode (no ECU writes until security model validated)
 
+## ZeroClaw Reference
+
+- **Repo**: https://github.com/zeroclaw-labs/zeroclaw
+- **Language**: Rust — trait-driven, swappable subsystems (providers, channels, memory, tools, runtime)
+- **Binary**: ~8.8 MB, <5 MB RAM, ~10 ms cold startup
+- **Build from source**: `cargo build --release --locked`
+- **Install**: `cargo install --path . --force --locked` or `brew install zeroclaw`
+- **Config**: TOML at `~/.zeroclaw/config.toml`
+- **Key crates**: `src/` (core runtime), `crates/robot-kit/` (subsystem components), `web/` (dashboard), `firmware/` (hardware integration)
+- **Providers**: OpenAI, Anthropic, OpenRouter, custom endpoints
+- **Memory**: SQLite hybrid search (vector + FTS5/BM25), PostgreSQL, Markdown, or none
+- **License**: MIT OR Apache-2.0
+
 ## Key Technology Choices
 - **Rust** — ZeroClaw agent runtime (memory safety, small binary, fast startup)
 - **Ollama** — On-device LLM inference (offline capable, zero cost)

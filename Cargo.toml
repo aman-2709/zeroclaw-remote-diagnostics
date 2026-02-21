@@ -1,0 +1,72 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zc-protocol",
+    "crates/zc-canbus-tools",
+    "crates/zc-mqtt-channel",
+    "crates/zc-log-tools",
+    "crates/zc-fleet-agent",
+    "crates/zc-cloud-api",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aman-2709/zeroclaw-remote-diagnostics"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Time & IDs
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v7", "serde"] }
+
+# MQTT
+rumqttc = "0.24"
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
+
+# CAN bus
+socketcan = "3.5"
+
+# AWS
+aws-config = "1.5"
+aws-sdk-iotdataplane = "1.0"
+aws-sdk-bedrockruntime = "1.0"
+
+# Internal crates
+zc-protocol = { path = "crates/zc-protocol" }
+zc-canbus-tools = { path = "crates/zc-canbus-tools" }
+zc-mqtt-channel = { path = "crates/zc-mqtt-channel" }
+zc-log-tools = { path = "crates/zc-log-tools" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release-edge]
+inherits = "release"
+opt-level = "s"  # Optimize for binary size on ARM devices

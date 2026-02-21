@@ -1,0 +1,49 @@
+# Rust
+/target/
+**/*.rs.bk
+# Cargo.lock is committed — workspace contains binaries
+
+# Node / Frontend
+node_modules/
+.pnpm-store/
+frontend/build/
+frontend/.svelte-kit/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Certificates & Secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+certs/
+
+# Terraform
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.backup
+infra/**/*.tfvars
+!infra/**/*.tfvars.example
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Test artifacts
+coverage/
+*.profraw
