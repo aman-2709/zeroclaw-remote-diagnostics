@@ -2971,12 +2971,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "socketcan",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
  "zc-protocol",
 ]
 
