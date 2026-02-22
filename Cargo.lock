@@ -3867,6 +3867,7 @@ dependencies = [
  "axum",
  "chrono",
  "http-body-util",
+ "rumqttc",
  "serde",
  "serde_json",
  "sqlx",
@@ -3877,6 +3878,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zc-mqtt-channel",
  "zc-protocol",
 ]
 

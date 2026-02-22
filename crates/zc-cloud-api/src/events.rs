@@ -41,6 +41,22 @@ pub enum WsEvent {
         new_status: String,
         changed_at: DateTime<Utc>,
     },
+
+    /// A new device was provisioned.
+    DeviceProvisioned {
+        device_id: String,
+        fleet_id: String,
+        hardware_type: String,
+        provisioned_at: DateTime<Utc>,
+    },
+
+    /// Telemetry readings were ingested.
+    TelemetryIngested {
+        device_id: String,
+        count: usize,
+        source: String,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[cfg(test)]

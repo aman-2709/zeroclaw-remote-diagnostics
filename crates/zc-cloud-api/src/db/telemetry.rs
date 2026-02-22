@@ -48,7 +48,6 @@ pub async fn query_readings(
 }
 
 /// Insert a batch of telemetry readings.
-#[allow(dead_code)]
 pub async fn insert_batch(pool: &PgPool, readings: &[TelemetryRow]) -> Result<(), sqlx::Error> {
     for row in readings {
         sqlx::query(

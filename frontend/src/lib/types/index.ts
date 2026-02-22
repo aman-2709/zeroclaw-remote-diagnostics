@@ -50,4 +50,18 @@ export type WsEvent =
 			old_status: string;
 			new_status: string;
 			changed_at: string;
+	  }
+	| {
+			type: 'device_provisioned';
+			device_id: string;
+			fleet_id: string;
+			hardware_type: string;
+			provisioned_at: string;
+	  }
+	| {
+			type: 'telemetry_ingested';
+			device_id: string;
+			count: number;
+			source: string;
+			timestamp: string;
 	  };

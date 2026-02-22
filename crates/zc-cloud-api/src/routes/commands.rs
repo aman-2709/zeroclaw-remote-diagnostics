@@ -114,6 +114,21 @@ pub async fn send_command(
         created_at: envelope.created_at,
     });
 
+    // Publish command envelope to MQTT if the bridge is connected.
+    if let Some(mqtt) = &state.mqtt {
+        let topic = zc_protocol::topics::command_request(&envelope.fleet_id, &envelope.device_id);
+        if let Err(e) = mqtt
+            .publish(
+                &topic,
+                &serde_json::to_vec(&envelope).unwrap_or_default(),
+                rumqttc::QoS::AtLeastOnce,
+            )
+            .await
+        {
+            tracing::error!(error = %e, "failed to publish command to mqtt");
+        }
+    }
+
     Ok(Json(envelope))
 }
 

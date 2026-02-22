@@ -25,7 +25,10 @@ pub fn build_router(state: AppState) -> Router {
 
     let api = Router::new()
         // Device endpoints
-        .route("/devices", get(devices::list_devices))
+        .route(
+            "/devices",
+            get(devices::list_devices).post(devices::provision_device),
+        )
         .route("/devices/{id}", get(devices::get_device))
         // Command endpoints
         .route(
@@ -36,7 +39,10 @@ pub fn build_router(state: AppState) -> Router {
         // Command response ingestion
         .route("/commands/{id}/respond", post(responses::ingest_response))
         // Telemetry endpoints
-        .route("/devices/{id}/telemetry", get(telemetry::get_telemetry))
+        .route(
+            "/devices/{id}/telemetry",
+            get(telemetry::get_telemetry).post(telemetry::ingest_telemetry),
+        )
         // Heartbeat ingestion
         .route("/heartbeat", post(heartbeat::ingest_heartbeat))
         // WebSocket endpoint

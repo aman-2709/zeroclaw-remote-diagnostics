@@ -1,13 +1,15 @@
 //! ZeroClaw Cloud API — fleet management REST server.
 //!
 //! Provides REST endpoints for device registry, command dispatch,
-//! telemetry queries, and real-time updates via WebSocket (Phase 2).
+//! telemetry queries, real-time updates via WebSocket, and an optional
+//! MQTT bridge to forward commands to devices and ingest responses.
 
 mod config;
 pub mod db;
 mod error;
 pub mod events;
 pub mod inference;
+mod mqtt_bridge;
 mod routes;
 mod state;
 
@@ -50,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Connect to PostgreSQL if DATABASE_URL is set, otherwise use in-memory state.
-    let state = if let Ok(database_url) = std::env::var("DATABASE_URL") {
+    let mut state = if let Ok(database_url) = std::env::var("DATABASE_URL") {
         tracing::info!("connecting to PostgreSQL");
         let pool = db::connect(&database_url).await?;
         AppState::with_pool(pool, inference)
@@ -58,6 +60,79 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("DATABASE_URL not set — using in-memory state with sample data");
         AppState::with_sample_data()
     };
+
+    // Start MQTT bridge if enabled.
+    if config.mqtt_enabled {
+        if config.mqtt_fleet_id.is_empty() {
+            anyhow::bail!("MQTT_ENABLED=true but MQTT_FLEET_ID is not set");
+        }
+
+        tracing::info!(
+            broker = format!("{}:{}", config.mqtt_broker_host, config.mqtt_broker_port),
+            fleet_id = %config.mqtt_fleet_id,
+            tls = config.mqtt_use_tls,
+            "connecting to mqtt broker"
+        );
+
+        let (channel, eventloop) = if config.mqtt_use_tls {
+            let mqtt_config = zc_mqtt_channel::MqttConfig {
+                broker_host: config.mqtt_broker_host.clone(),
+                broker_port: config.mqtt_broker_port,
+                client_id: "zc-cloud-api".to_string(),
+                ca_cert_path: config
+                    .mqtt_ca_cert
+                    .clone()
+                    .unwrap_or_else(|| "certs/ca.pem".to_string()),
+                client_cert_path: config
+                    .mqtt_client_cert
+                    .clone()
+                    .unwrap_or_else(|| "certs/client.pem".to_string()),
+                client_key_path: config
+                    .mqtt_client_key
+                    .clone()
+                    .unwrap_or_else(|| "certs/client.key".to_string()),
+                keepalive_secs: 30,
+            };
+            zc_mqtt_channel::MqttChannel::new(&mqtt_config, &config.mqtt_fleet_id, "cloud-api")?
+        } else {
+            zc_mqtt_channel::MqttChannel::new_plaintext(
+                &config.mqtt_broker_host,
+                config.mqtt_broker_port,
+                "zc-cloud-api",
+                &config.mqtt_fleet_id,
+                "cloud-api",
+            )
+        };
+
+        // Subscribe to fleet-wide topics.
+        channel
+            .subscribe_fleet_responses()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to subscribe to fleet responses: {e}"))?;
+        channel
+            .subscribe_fleet_heartbeats()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to subscribe to fleet heartbeats: {e}"))?;
+        // Subscribe to all three telemetry sources.
+        for source in &["obd2", "system", "canbus"] {
+            channel
+                .subscribe_fleet_telemetry(source)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to subscribe to fleet telemetry/{source}: {e}")
+                })?;
+        }
+
+        tracing::info!("mqtt subscriptions established");
+
+        state.mqtt = Some(Arc::new(channel));
+
+        // Spawn the bridge event loop.
+        let bridge_state = state.clone();
+        tokio::spawn(mqtt_bridge::run(eventloop, bridge_state));
+
+        tracing::info!("mqtt bridge spawned");
+    }
 
     let app = routes::build_router(state);
 
