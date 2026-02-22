@@ -4,6 +4,7 @@
 //! telemetry queries, and real-time updates via WebSocket (Phase 2).
 
 mod config;
+pub mod db;
 mod error;
 mod routes;
 mod state;
@@ -23,11 +24,17 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zc-cloud-api starting");
 
-    // Phase 2: Load config from file/env. For now, use defaults.
     let config = ApiConfig::default();
 
-    // Phase 2: Replace with PostgreSQL-backed state.
-    let state = AppState::with_sample_data();
+    // Connect to PostgreSQL if DATABASE_URL is set, otherwise use in-memory state.
+    let state = if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        tracing::info!("connecting to PostgreSQL");
+        let pool = db::connect(&database_url).await?;
+        AppState::with_pool(pool)
+    } else {
+        tracing::warn!("DATABASE_URL not set — using in-memory state with sample data");
+        AppState::with_sample_data()
+    };
 
     let app = routes::build_router(state);
 

@@ -1,11 +1,14 @@
 //! Shared application state for the Axum server.
 //!
-//! Phase 1 uses in-memory stores. Phase 2 replaces with PostgreSQL.
+//! Supports two modes:
+//! - **Database mode**: uses `PgPool` for persistent storage (production).
+//! - **In-memory mode**: uses `RwLock<HashMap>` (tests and development).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use sqlx::PgPool;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -15,9 +18,11 @@ use zc_protocol::device::{DeviceInfo, DeviceStatus, HardwareType};
 /// Shared application state, wrapped in `Arc` for Axum handler sharing.
 #[derive(Clone)]
 pub struct AppState {
-    /// In-memory device registry (Phase 2: PostgreSQL).
+    /// PostgreSQL connection pool (None in test/in-memory mode).
+    pub pool: Option<PgPool>,
+    /// In-memory device registry (used when pool is None).
     pub devices: Arc<RwLock<HashMap<String, DeviceInfo>>>,
-    /// In-memory command log (Phase 2: PostgreSQL).
+    /// In-memory command log (used when pool is None).
     pub commands: Arc<RwLock<Vec<CommandRecord>>>,
 }
 
@@ -30,14 +35,25 @@ pub struct CommandRecord {
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    /// Create state backed by a PostgreSQL pool.
+    pub fn with_pool(pool: PgPool) -> Self {
         Self {
+            pool: Some(pool),
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    /// Create state with sample devices for development.
+    /// Create in-memory state (for tests).
+    pub fn new() -> Self {
+        Self {
+            pool: None,
+            devices: Arc::new(RwLock::new(HashMap::new())),
+            commands: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Create state with sample devices for development / tests.
     pub fn with_sample_data() -> Self {
         let mut devices = HashMap::new();
 
@@ -66,6 +82,7 @@ impl AppState {
         }
 
         Self {
+            pool: None,
             devices: Arc::new(RwLock::new(devices)),
             commands: Arc::new(RwLock::new(Vec::new())),
         }
