@@ -1,0 +1,46 @@
+[package]
+name = "zc-e2e-tests"
+description = "End-to-end integration tests across all ZeroClaw crates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "zc_e2e_tests"
+path = "src/lib.rs"
+
+[dependencies]
+# No runtime dependencies — this crate is test-only.
+
+[dev-dependencies]
+# All workspace crates
+zc-protocol = { workspace = true }
+zc-canbus-tools = { workspace = true }
+zc-mqtt-channel = { workspace = true }
+zc-log-tools = { workspace = true }
+zc-fleet-agent = { workspace = true }
+zc-cloud-api = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# IDs & time
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Web framework (for tower::ServiceExt::oneshot)
+axum = { workspace = true }
+tower = { workspace = true }
+
+# HTTP body extraction in tests
+http-body-util = "0.1"
+
+# MQTT QoS enum
+rumqttc = { workspace = true }
+
+# Ollama mock server
+wiremock = "0.6"

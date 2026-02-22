@@ -34,7 +34,7 @@ pub async fn run(mut eventloop: rumqttc::EventLoop, state: AppState) {
 }
 
 /// Classify and handle an incoming MQTT publish.
-async fn handle_incoming(topic: &str, payload: &[u8], state: &AppState) {
+pub async fn handle_incoming(topic: &str, payload: &[u8], state: &AppState) {
     let Some(parsed) = topics::parse_topic(topic) else {
         tracing::debug!(topic = topic, "ignoring unknown mqtt topic");
         return;

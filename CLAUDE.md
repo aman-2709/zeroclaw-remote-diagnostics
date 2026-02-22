@@ -4,7 +4,20 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 2 in progress — PostgreSQL + WebSocket real-time events
+**Status**: Phase 3 complete — device provisioning, telemetry ingestion, MQTT bridge
+
+## Memory Management (MANDATORY)
+
+Auto-memory directory: `~/.claude/projects/-home-aman-dev-personal-projects-zeroclaw-remote-diagnostics/memory/`
+
+**Rules — these are non-negotiable:**
+1. Before EVERY `/clear` or context compaction: update `memory/current-task.md` with exact progress and next steps
+2. After EVERY `/clear`: read `memory/current-task.md` and resume — do NOT ask the user what to do
+3. After EVERY commit: update `memory/MEMORY.md` project status (phase, last commit, test count)
+4. When starting a new phase/feature: write the plan to `memory/current-task.md` FIRST
+5. `current-task.md` must always have: status, what's in progress, specific next steps with file paths
+
+Hooks in `.claude/settings.json` enforce rules 1-2 automatically.
 
 ## Architecture (Three Layers)
 
