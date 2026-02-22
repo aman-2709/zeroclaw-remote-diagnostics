@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::InferenceEngine;
+use super::{InferenceEngine, ParseResult};
 use zc_protocol::commands::ParsedIntent;
 
 /// Pattern-matching inference engine for structured commands.
@@ -26,8 +26,11 @@ impl Default for RuleBasedEngine {
 
 #[async_trait]
 impl InferenceEngine for RuleBasedEngine {
-    async fn parse(&self, text: &str) -> Option<ParsedIntent> {
-        parse_command(text)
+    async fn parse(&self, text: &str) -> Option<ParseResult> {
+        parse_command(text).map(|intent| ParseResult {
+            intent,
+            tier: "local".into(),
+        })
     }
 
     fn tier_name(&self) -> &str {

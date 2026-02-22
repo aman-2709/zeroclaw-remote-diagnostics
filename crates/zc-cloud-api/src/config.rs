@@ -18,6 +18,9 @@ pub struct ApiConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub cors_origins: Vec<String>,
+    /// Enable AWS Bedrock cloud inference fallback (BEDROCK_ENABLED env var).
+    #[serde(default)]
+    pub bedrock_enabled: bool,
 }
 
 fn default_host() -> String {
@@ -28,6 +31,19 @@ fn default_port() -> u16 {
     3000
 }
 
+impl ApiConfig {
+    /// Load config from environment variables.
+    pub fn from_env() -> Self {
+        let bedrock_enabled = std::env::var("BEDROCK_ENABLED")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
+        Self {
+            bedrock_enabled,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
@@ -35,6 +51,7 @@ impl Default for ApiConfig {
             port: default_port(),
             database_url: None,
             cors_origins: vec![],
+            bedrock_enabled: false,
         }
     }
 }
@@ -49,5 +66,6 @@ mod tests {
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 3000);
         assert!(config.database_url.is_none());
+        assert!(!config.bedrock_enabled);
     }
 }
