@@ -43,6 +43,7 @@ export interface CommandSummary {
 	device_id: string;
 	command: string;
 	status: CommandStatus | null;
+	response_text?: string | null;
 	created_at: string;
 }
 

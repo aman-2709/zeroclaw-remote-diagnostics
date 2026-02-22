@@ -36,10 +36,14 @@
 				};
 				commands = [summary, ...commands];
 			} else if (event.type === 'command_response') {
-				// Update the command status in-place
+				// Update the command status and response_text in-place
 				commands = commands.map((cmd) =>
 					cmd.id === event.command_id
-						? { ...cmd, status: (event.status as CommandSummary['status']) }
+						? {
+								...cmd,
+								status: event.status as CommandSummary['status'],
+								response_text: event.response_text
+							}
 						: cmd
 				);
 			}
@@ -77,6 +81,7 @@
 						<th class="px-4 py-3">Device</th>
 						<th class="px-4 py-3">Command</th>
 						<th class="px-4 py-3">Status</th>
+						<th class="px-4 py-3">Response</th>
 						<th class="px-4 py-3">Time</th>
 					</tr>
 				</thead>
@@ -91,6 +96,15 @@
 							<td class="px-4 py-3">{cmd.command}</td>
 							<td class="px-4 py-3">
 								<StatusBadge status={cmd.status} />
+							</td>
+							<td class="px-4 py-3 max-w-xs truncate text-text-muted">
+								{#if cmd.response_text}
+									{cmd.response_text}
+								{:else if cmd.status === 'pending'}
+									<span class="italic">awaiting...</span>
+								{:else}
+									—
+								{/if}
 							</td>
 							<td class="px-4 py-3 text-text-muted">
 								{new Date(cmd.created_at).toLocaleString()}

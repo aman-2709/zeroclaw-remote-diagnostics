@@ -4,6 +4,7 @@ pub mod commands;
 pub mod devices;
 pub mod health;
 pub mod heartbeat;
+pub mod responses;
 pub mod telemetry;
 pub mod ws;
 
@@ -32,6 +33,8 @@ pub fn build_router(state: AppState) -> Router {
             get(commands::list_commands).post(commands::send_command),
         )
         .route("/commands/{id}", get(commands::get_command))
+        // Command response ingestion
+        .route("/commands/{id}/respond", post(responses::ingest_response))
         // Telemetry endpoints
         .route("/devices/{id}/telemetry", get(telemetry::get_telemetry))
         // Heartbeat ingestion
