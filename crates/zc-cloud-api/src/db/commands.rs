@@ -32,11 +32,11 @@ pub struct CommandRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// Insert a new command (status = 'pending').
+/// Insert a new command (status = 'pending') with inference results.
 pub async fn insert(pool: &PgPool, row: &CommandRow) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO commands (id, fleet_id, device_id, natural_language, initiated_by, correlation_id, timeout_secs, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        "INSERT INTO commands (id, fleet_id, device_id, natural_language, initiated_by, correlation_id, timeout_secs, status, created_at, tool_name, tool_args, confidence, inference_tier)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(row.id)
     .bind(&row.fleet_id)
@@ -47,6 +47,10 @@ pub async fn insert(pool: &PgPool, row: &CommandRow) -> Result<(), sqlx::Error> 
     .bind(row.timeout_secs)
     .bind(&row.status)
     .bind(row.created_at)
+    .bind(&row.tool_name)
+    .bind(&row.tool_args)
+    .bind(row.confidence)
+    .bind(&row.inference_tier)
     .execute(pool)
     .await?;
     Ok(())
@@ -69,7 +73,7 @@ pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<CommandRow>, s
 }
 
 /// Update command with a response.
-#[allow(dead_code, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn update_response(
     pool: &PgPool,
     command_id: Uuid,

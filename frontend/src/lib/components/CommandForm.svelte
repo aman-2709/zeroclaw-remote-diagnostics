@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import type { CommandEnvelope } from '$lib/types';
+	import type { CommandEnvelope, WsEvent } from '$lib/types';
+	import { wsStore } from '$lib/stores/websocket.svelte';
+	import { onMount } from 'svelte';
 
 	let {
 		deviceId = '',
@@ -16,6 +18,36 @@
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 	let lastResult = $state<CommandEnvelope | null>(null);
+	let awaitingResponse = $state(false);
+	let responseText = $state<string | null>(null);
+	let responseError = $state<string | null>(null);
+
+	let unsub: (() => void) | null = null;
+
+	onMount(() => {
+		return () => {
+			unsub?.();
+		};
+	});
+
+	function subscribeToResponse(commandId: string) {
+		unsub?.();
+		awaitingResponse = true;
+		responseText = null;
+		responseError = null;
+
+		unsub = wsStore.onEvent((event: WsEvent) => {
+			if (event.type === 'command_response' && event.command_id === commandId) {
+				awaitingResponse = false;
+				responseText = event.response_text ?? null;
+				if (event.status === 'failed') {
+					responseError = 'Command execution failed on device';
+				}
+				unsub?.();
+				unsub = null;
+			}
+		});
+	}
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -24,6 +56,9 @@
 		loading = true;
 		error = null;
 		lastResult = null;
+		awaitingResponse = false;
+		responseText = null;
+		responseError = null;
 
 		try {
 			const envelope = await api.sendCommand({
@@ -34,6 +69,7 @@
 			});
 			lastResult = envelope;
 			command = '';
+			subscribeToResponse(envelope.id);
 			onSuccess?.(envelope);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to send command';
@@ -96,6 +132,26 @@
 				</div>
 			{:else}
 				<p class="mt-1 text-xs text-warning">Command could not be parsed — will require cloud inference.</p>
+			{/if}
+
+			{#if awaitingResponse}
+				<div class="mt-2 flex items-center gap-2 text-xs text-text-muted">
+					<span class="inline-block h-3 w-3 animate-pulse rounded-full bg-warning"></span>
+					Waiting for device response...
+				</div>
+			{/if}
+
+			{#if responseText}
+				<div class="mt-2 rounded border border-success/20 bg-success/5 p-2 text-xs">
+					<span class="font-medium text-success">Response:</span>
+					<span class="ml-1">{responseText}</span>
+				</div>
+			{/if}
+
+			{#if responseError}
+				<div class="mt-2 rounded border border-danger/20 bg-danger/5 p-2 text-xs text-danger">
+					{responseError}
+				</div>
 			{/if}
 		</div>
 	{/if}
