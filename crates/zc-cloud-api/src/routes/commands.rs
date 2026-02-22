@@ -50,14 +50,23 @@ pub async fn send_command(
         }
     }
 
-    let envelope = CommandEnvelope::new(
+    let mut envelope = CommandEnvelope::new(
         &req.fleet_id,
         &req.device_id,
         &req.command,
         &req.initiated_by,
     );
 
-    // Store the command
+    // Run NL inference to parse command into tool invocation.
+    let parsed_intent = state.inference.parse(&req.command).await;
+    let inference_tier = if parsed_intent.is_some() {
+        Some(state.inference.tier_name().to_string())
+    } else {
+        None
+    };
+    envelope.parsed_intent = parsed_intent.clone();
+
+    // Store the command (with parsed intent if available)
     if let Some(pool) = &state.pool {
         let row = crate::db::commands::CommandRow {
             id: envelope.id,
@@ -67,11 +76,11 @@ pub async fn send_command(
             initiated_by: envelope.initiated_by.clone(),
             correlation_id: envelope.correlation_id,
             timeout_secs: envelope.timeout_secs as i32,
-            tool_name: None,
-            tool_args: None,
-            confidence: None,
+            tool_name: parsed_intent.as_ref().map(|i| i.tool_name.clone()),
+            tool_args: parsed_intent.as_ref().map(|i| i.tool_args.clone()),
+            confidence: parsed_intent.as_ref().map(|i| i.confidence),
             status: "pending".to_string(),
-            inference_tier: None,
+            inference_tier,
             response_text: None,
             response_data: None,
             latency_ms: None,
@@ -124,6 +133,9 @@ pub async fn get_command(
             "device_id": row.device_id,
             "command": row.natural_language,
             "status": row.status,
+            "tool_name": row.tool_name,
+            "tool_args": row.tool_args,
+            "confidence": row.confidence,
             "inference_tier": row.inference_tier,
             "response_text": row.response_text,
             "response_data": row.response_data,
