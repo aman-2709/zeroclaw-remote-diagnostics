@@ -119,6 +119,11 @@ infra/
     compute/           — Lambda (Rust/AL2023/ARM64), API Gateway HTTP API
     data/              — RDS PostgreSQL 16, Secrets Manager
     monitoring/        — CloudWatch alarms, dashboard
+frontend/                — SvelteKit 5 + Tailwind CSS 4 (SPA, adapter-static)
+  src/lib/types/         — TypeScript types mirroring zc-protocol
+  src/lib/api/client.ts  — API client for cloud API endpoints
+  src/lib/components/    — Reusable components (StatusBadge, DeviceCard, CommandForm)
+  src/routes/            — Pages: devices list, device detail, commands history
 ```
 
 ### Key Patterns
@@ -152,3 +157,21 @@ terraform apply -var-file=terraform.tfvars
 ```
 
 Copy `infra/terraform.tfvars.example` to `infra/terraform.tfvars` before planning.
+
+## Frontend (SvelteKit)
+
+```bash
+cd frontend/
+
+# Install dependencies
+pnpm install
+
+# Dev server (proxies /api to localhost:3000)
+pnpm dev
+
+# Type check
+pnpm check
+
+# Production build (outputs to frontend/build/)
+pnpm build
+```
