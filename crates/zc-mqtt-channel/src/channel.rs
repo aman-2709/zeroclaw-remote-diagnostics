@@ -175,6 +175,26 @@ impl MqttChannel {
         self.subscribe(&topic, QoS::AtLeastOnce).await
     }
 
+    // ── Fleet-level subscriptions (cloud bridge) ────────────
+
+    /// Subscribe to all command responses in the fleet (cloud-side).
+    pub async fn subscribe_fleet_responses(&self) -> MqttResult<()> {
+        let topic = topics::fleet_command_responses(&self.fleet_id);
+        self.subscribe(&topic, QoS::AtLeastOnce).await
+    }
+
+    /// Subscribe to all heartbeats in the fleet (cloud-side).
+    pub async fn subscribe_fleet_heartbeats(&self) -> MqttResult<()> {
+        let topic = topics::fleet_heartbeats(&self.fleet_id);
+        self.subscribe(&topic, QoS::AtLeastOnce).await
+    }
+
+    /// Subscribe to all telemetry for a given source in the fleet (cloud-side).
+    pub async fn subscribe_fleet_telemetry(&self, source: &str) -> MqttResult<()> {
+        let topic = topics::fleet_telemetry(&self.fleet_id, source);
+        self.subscribe(&topic, QoS::AtLeastOnce).await
+    }
+
     // ── Internal helpers ──────────────────────────────────────
 
     async fn publish_json<T: Serialize>(&self, topic: &str, payload: &T) -> MqttResult<()> {

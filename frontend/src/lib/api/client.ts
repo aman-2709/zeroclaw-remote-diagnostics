@@ -3,6 +3,7 @@
 import type {
 	DeviceSummary,
 	DeviceInfo,
+	ProvisionDeviceRequest,
 	CommandEnvelope,
 	CommandRecord,
 	CommandSummary,
@@ -52,6 +53,14 @@ export const api = {
 	/** GET /api/v1/devices/:id */
 	getDevice(id: string): Promise<DeviceInfo> {
 		return request(`${BASE}/devices/${encodeURIComponent(id)}`);
+	},
+
+	/** POST /api/v1/devices */
+	provisionDevice(req: ProvisionDeviceRequest): Promise<DeviceInfo> {
+		return request(`${BASE}/devices`, {
+			method: 'POST',
+			body: JSON.stringify(req)
+		});
 	},
 
 	/** GET /api/v1/devices/:id/telemetry */

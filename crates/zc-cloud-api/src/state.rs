@@ -31,6 +31,8 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<WsEvent>,
     /// NL inference engine for command parsing.
     pub inference: Arc<dyn InferenceEngine>,
+    /// MQTT channel for publishing commands to devices (None when MQTT disabled).
+    pub mqtt: Option<Arc<dyn zc_mqtt_channel::Channel>>,
 }
 
 /// A command with its response (if available).
@@ -51,6 +53,7 @@ impl AppState {
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
             inference,
+            mqtt: None,
         }
     }
 
@@ -63,6 +66,7 @@ impl AppState {
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
             inference: Arc::new(crate::inference::RuleBasedEngine::new()),
+            mqtt: None,
         }
     }
 
@@ -101,6 +105,7 @@ impl AppState {
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
             inference: Arc::new(crate::inference::RuleBasedEngine::new()),
+            mqtt: None,
         }
     }
 }

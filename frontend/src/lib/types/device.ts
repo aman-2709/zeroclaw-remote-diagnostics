@@ -30,3 +30,11 @@ export interface DeviceInfo {
 	created_at: string;
 	updated_at: string;
 }
+
+export interface ProvisionDeviceRequest {
+	device_id: string;
+	fleet_id: string;
+	hardware_type: string;
+	vin?: string;
+	metadata?: Record<string, unknown>;
+}
