@@ -16,6 +16,7 @@ use zc_protocol::commands::{CommandEnvelope, CommandResponse};
 use zc_protocol::device::{DeviceInfo, DeviceStatus, HardwareType};
 
 use crate::events::WsEvent;
+use crate::inference::InferenceEngine;
 
 /// Shared application state, wrapped in `Arc` for Axum handler sharing.
 #[derive(Clone)]
@@ -28,6 +29,8 @@ pub struct AppState {
     pub commands: Arc<RwLock<Vec<CommandRecord>>>,
     /// Broadcast channel for real-time WebSocket events.
     pub event_tx: broadcast::Sender<WsEvent>,
+    /// NL inference engine for command parsing.
+    pub inference: Arc<dyn InferenceEngine>,
 }
 
 /// A command with its response (if available).
@@ -47,6 +50,7 @@ impl AppState {
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
+            inference: Arc::new(crate::inference::RuleBasedEngine::new()),
         }
     }
 
@@ -58,6 +62,7 @@ impl AppState {
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
+            inference: Arc::new(crate::inference::RuleBasedEngine::new()),
         }
     }
 
@@ -95,6 +100,7 @@ impl AppState {
             devices: Arc::new(RwLock::new(devices)),
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
+            inference: Arc::new(crate::inference::RuleBasedEngine::new()),
         }
     }
 }
