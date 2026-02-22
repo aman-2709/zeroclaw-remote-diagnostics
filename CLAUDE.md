@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Pre-development (PoC proposal stage — no source code yet)
+**Status**: Phase 1 complete — all 6 Rust crates + Terraform infrastructure
 
 ## Architecture (Three Layers)
 
@@ -111,7 +111,14 @@ crates/
   zc-log-tools/      — Multi-format log parsing + 4 analysis tools
   zc-mqtt-channel/   — MQTT channel abstraction for AWS IoT Core (mTLS)
   zc-fleet-agent/    — Edge agent binary (wires all crates + MQTT event loop)
-  zc-cloud-api/      — Cloud API server (Axum) — scaffold only
+  zc-cloud-api/      — Cloud API server (Axum REST API, in-memory state)
+infra/
+  modules/
+    networking/        — VPC, subnets (public/private), NAT, routing
+    iot-core/          — Thing types, thing groups, IoT policies, topic rules
+    compute/           — Lambda (Rust/AL2023/ARM64), API Gateway HTTP API
+    data/              — RDS PostgreSQL 16, Secrets Manager
+    monitoring/        — CloudWatch alarms, dashboard
 ```
 
 ### Key Patterns
@@ -122,3 +129,26 @@ crates/
 - **all_tools()** factory functions return `Vec<Box<dyn XxxTool>>`
 - Edition 2024 Rust — use `if let ... && let ...` for clippy collapsible_if
 - `cargo fmt --all` (not `--workspace`) on this Rust version
+
+## Terraform (Infrastructure)
+
+```bash
+cd infra/
+
+# Initialize (first time or after adding modules)
+terraform init
+
+# Validate configuration
+terraform validate
+
+# Format
+terraform fmt -recursive
+
+# Plan (requires AWS credentials)
+terraform plan -var-file=terraform.tfvars
+
+# Apply
+terraform apply -var-file=terraform.tfvars
+```
+
+Copy `infra/terraform.tfvars.example` to `infra/terraform.tfvars` before planning.

@@ -46,6 +46,22 @@ check-protocol:
     cargo check -p zc-protocol
     cargo test -p zc-protocol
 
+# Validate Terraform
+tf-validate:
+    cd infra && terraform fmt -recursive -check && terraform validate
+
+# Format Terraform files
+tf-fmt:
+    cd infra && terraform fmt -recursive
+
+# Plan infrastructure changes
+tf-plan:
+    cd infra && terraform plan -var-file=terraform.tfvars
+
+# Apply infrastructure changes
+tf-apply:
+    cd infra && terraform apply -var-file=terraform.tfvars
+
 # Install frontend dependencies
 frontend-install:
     cd frontend && pnpm install

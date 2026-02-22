@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars and fill in values.
+# terraform.tfvars is gitignored — never commit secrets.
+
+aws_region    = "us-east-1"
+environment   = "dev"
+project_name  = "zeroclaw"
+
+# Networking
+vpc_cidr = "10.0.0.0/16"
+
+# Database
+db_instance_class = "db.t4g.micro"
+db_name           = "zeroclaw"
+db_username       = "zcadmin"
+
+# IoT Core
+fleet_ids   = ["fleet-alpha", "fleet-beta"]
+max_devices = 50
+
+# API
+api_stage_name = "v1"
