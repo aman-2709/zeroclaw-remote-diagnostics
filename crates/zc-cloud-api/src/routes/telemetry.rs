@@ -1,7 +1,7 @@
 //! Telemetry query endpoints.
 //!
-//! Phase 1: returns empty results (no telemetry storage yet).
-//! Phase 2: queries TimescaleDB hypertables.
+//! Queries the telemetry_readings table when database is available,
+//! otherwise returns empty results.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -31,6 +31,50 @@ pub async fn get_telemetry(
     Query(query): Query<TelemetryQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // Verify device exists
+    if let Some(pool) = &state.pool {
+        let exists = crate::db::devices::exists(pool, &device_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        if !exists {
+            return Err(ApiError::NotFound(format!(
+                "device '{device_id}' not found"
+            )));
+        }
+
+        // Query real telemetry data
+        let rows = crate::db::telemetry::query_readings(
+            pool,
+            &device_id,
+            query.source.as_deref(),
+            query.limit,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let readings: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "time": r.time,
+                    "metric_name": r.metric_name,
+                    "value_numeric": r.value_numeric,
+                    "value_text": r.value_text,
+                    "value_json": r.value_json,
+                    "unit": r.unit,
+                    "source": r.source,
+                })
+            })
+            .collect();
+
+        return Ok(Json(serde_json::json!({
+            "device_id": device_id,
+            "source": query.source,
+            "limit": query.limit,
+            "readings": readings,
+        })));
+    }
+
+    // In-memory fallback: verify device exists, return empty readings
     {
         let devices = state.devices.read().await;
         if !devices.contains_key(&device_id) {
@@ -40,12 +84,11 @@ pub async fn get_telemetry(
         }
     }
 
-    // Phase 2: Query TimescaleDB
     Ok(Json(serde_json::json!({
         "device_id": device_id,
         "source": query.source,
         "limit": query.limit,
         "readings": [],
-        "message": "telemetry storage not yet implemented (Phase 2)"
+        "message": "telemetry storage not yet implemented (in-memory mode)"
     })))
 }
