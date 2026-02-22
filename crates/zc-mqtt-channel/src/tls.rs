@@ -67,6 +67,9 @@ mod tests {
         };
         let err = load_tls_transport(&config).err().expect("should fail");
         let msg = err.to_string();
-        assert!(msg.contains("CA cert"), "error should mention CA cert: {msg}");
+        assert!(
+            msg.contains("CA cert"),
+            "error should mention CA cert: {msg}"
+        );
     }
 }
