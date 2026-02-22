@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use zc_mqtt_channel::MqttConfig;
 
+use crate::inference::OllamaConfig;
+
 /// Top-level configuration for the fleet agent.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
@@ -22,6 +24,9 @@ pub struct AgentConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub log_paths: Vec<String>,
+    /// Local Ollama inference settings. Optional — defaults to enabled.
+    #[serde(default)]
+    pub ollama: OllamaConfig,
 }
 
 fn default_heartbeat_interval() -> u64 {
@@ -87,5 +92,51 @@ keepalive_secs = 60
         assert_eq!(config.heartbeat_interval_secs, 15);
         assert_eq!(config.log_paths.len(), 2);
         assert_eq!(config.mqtt.keepalive_secs, 60);
+    }
+
+    #[test]
+    fn deserialize_missing_ollama_uses_defaults() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.ollama.host, "http://localhost:11434");
+        assert_eq!(config.ollama.model, "phi3:mini");
+        assert_eq!(config.ollama.timeout_secs, 5);
+        assert!(config.ollama.enabled);
+    }
+
+    #[test]
+    fn deserialize_custom_ollama_config() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+
+[ollama]
+host = "http://192.168.1.50:11434"
+model = "gemma:2b"
+timeout_secs = 10
+enabled = false
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.ollama.host, "http://192.168.1.50:11434");
+        assert_eq!(config.ollama.model, "gemma:2b");
+        assert_eq!(config.ollama.timeout_secs, 10);
+        assert!(!config.ollama.enabled);
     }
 }

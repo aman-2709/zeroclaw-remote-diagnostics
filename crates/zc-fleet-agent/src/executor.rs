@@ -8,8 +8,11 @@ use std::time::Instant;
 
 use zc_canbus_tools::CanInterface;
 use zc_log_tools::LogSource;
-use zc_protocol::commands::{CommandEnvelope, CommandResponse, CommandStatus, InferenceTier};
+use zc_protocol::commands::{
+    CommandEnvelope, CommandResponse, CommandStatus, InferenceTier, ParsedIntent,
+};
 
+use crate::inference::OllamaClient;
 use crate::registry::{ToolKind, ToolRegistry};
 
 /// Executes commands by dispatching to the appropriate tool.
@@ -19,6 +22,7 @@ pub struct CommandExecutor<'a> {
     registry: &'a ToolRegistry,
     can_interface: &'a dyn CanInterface,
     log_source: &'a dyn LogSource,
+    ollama: Option<&'a OllamaClient>,
 }
 
 impl<'a> CommandExecutor<'a> {
@@ -26,28 +30,55 @@ impl<'a> CommandExecutor<'a> {
         registry: &'a ToolRegistry,
         can_interface: &'a dyn CanInterface,
         log_source: &'a dyn LogSource,
+        ollama: Option<&'a OllamaClient>,
     ) -> Self {
         Self {
             registry,
             can_interface,
             log_source,
+            ollama,
         }
     }
 
     /// Execute a command envelope and produce a response.
     ///
-    /// Requires `parsed_intent` to be present — natural-language inference
-    /// is not yet wired (Phase 2).
+    /// If `parsed_intent` is present (cloud pre-parsed), uses it directly.
+    /// Otherwise attempts local inference via Ollama, falling back to an
+    /// error if no match is found.
     pub async fn execute(&self, envelope: &CommandEnvelope) -> CommandResponse {
         let start = Instant::now();
 
-        let Some(ref intent) = envelope.parsed_intent else {
+        // Fast path: intent already parsed by cloud
+        let (intent, tier) = if let Some(ref intent) = envelope.parsed_intent {
+            (intent.clone(), InferenceTier::Local)
+        } else if let Some(ollama) = self.ollama {
+            // Local inference via Ollama
+            match ollama.parse(&envelope.natural_language).await {
+                Some(parsed) => {
+                    tracing::info!(
+                        tool = %parsed.tool_name,
+                        confidence = parsed.confidence,
+                        "ollama parsed command locally"
+                    );
+                    (parsed, InferenceTier::Local)
+                }
+                None => {
+                    return self.error_response(
+                        envelope,
+                        start,
+                        "no tool match for command — local inference returned no result",
+                    );
+                }
+            }
+        } else {
             return self.error_response(
                 envelope,
                 start,
-                "no parsed_intent — natural-language inference not yet available",
+                "no parsed_intent and local inference not available",
             );
         };
+
+        let intent: &ParsedIntent = &intent;
 
         let tool_name = &intent.tool_name;
         let Some((kind, idx)) = self.registry.lookup(tool_name) else {
@@ -75,7 +106,7 @@ impl<'a> CommandExecutor<'a> {
                 correlation_id: envelope.correlation_id,
                 device_id: envelope.device_id.clone(),
                 status: CommandStatus::Completed,
-                inference_tier: InferenceTier::Local,
+                inference_tier: tier,
                 response_text: Some(format!("Tool '{tool_name}' executed successfully")),
                 response_data: Some(data),
                 latency_ms,
@@ -87,7 +118,7 @@ impl<'a> CommandExecutor<'a> {
                 correlation_id: envelope.correlation_id,
                 device_id: envelope.device_id.clone(),
                 status: CommandStatus::Failed,
-                inference_tier: InferenceTier::Local,
+                inference_tier: tier,
                 response_text: None,
                 response_data: None,
                 latency_ms,
@@ -122,20 +153,25 @@ impl<'a> CommandExecutor<'a> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
     use zc_canbus_tools::MockCanInterface;
     use zc_log_tools::MockLogSource;
     use zc_protocol::commands::ParsedIntent;
 
+    use crate::inference::OllamaConfig;
+
+    /// Helper: build executor without Ollama (backward-compat path).
     fn make_executor<'a>(
         registry: &'a ToolRegistry,
         can: &'a MockCanInterface,
         logs: &'a MockLogSource,
     ) -> CommandExecutor<'a> {
-        CommandExecutor::new(registry, can, logs)
+        CommandExecutor::new(registry, can, logs, None)
     }
 
     #[tokio::test]
-    async fn execute_without_intent_fails() {
+    async fn execute_without_intent_no_ollama_fails() {
         let registry = ToolRegistry::with_defaults();
         let can = MockCanInterface::new();
         let logs = MockLogSource::with_syslog_sample();
@@ -145,7 +181,11 @@ mod tests {
         let resp = executor.execute(&cmd).await;
 
         assert_eq!(resp.status, CommandStatus::Failed);
-        assert!(resp.error.unwrap().contains("parsed_intent"));
+        assert!(
+            resp.error
+                .unwrap()
+                .contains("local inference not available")
+        );
     }
 
     #[tokio::test]
@@ -206,5 +246,73 @@ mod tests {
         assert_eq!(resp.command_id, cmd.id);
         assert_eq!(resp.correlation_id, cmd.correlation_id);
         assert_eq!(resp.device_id, "rpi-001");
+    }
+
+    // ── Ollama inference path tests ──────────────────────────────
+
+    fn ollama_response(content: &str) -> serde_json::Value {
+        json!({
+            "model": "phi3:mini",
+            "message": { "role": "assistant", "content": content },
+            "done": true
+        })
+    }
+
+    fn ollama_client_for(server: &MockServer) -> OllamaClient {
+        OllamaClient::new(OllamaConfig {
+            host: server.uri(),
+            model: "phi3:mini".into(),
+            timeout_secs: 2,
+            enabled: true,
+        })
+    }
+
+    #[tokio::test]
+    async fn execute_ollama_inference_succeeds() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"tool_name": "log_stats", "tool_args": {"path": "/var/log/syslog"}, "confidence": 0.92}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+        let ollama = ollama_client_for(&server);
+        let executor = CommandExecutor::new(&registry, &can, &logs, Some(&ollama));
+
+        // No parsed_intent — should fall through to Ollama
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "show me log stats", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        assert!(resp.response_data.is_some());
+    }
+
+    #[tokio::test]
+    async fn execute_ollama_no_match_fails() {
+        let server = MockServer::start().await;
+        let body = ollama_response(r#"{"tool_name": null, "tool_args": {}, "confidence": 0.0}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+        let ollama = ollama_client_for(&server);
+        let executor = CommandExecutor::new(&registry, &can, &logs, Some(&ollama));
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "bake a pizza", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Failed);
+        assert!(resp.error.unwrap().contains("no tool match"));
     }
 }
