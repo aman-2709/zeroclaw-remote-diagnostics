@@ -123,8 +123,8 @@ fn strip_structured_data(s: &str) -> &str {
     if s == "-" {
         return "";
     }
-    if s.starts_with("- ") {
-        return &s[2..];
+    if let Some(rest) = s.strip_prefix("- ") {
+        return rest;
     }
     if s.starts_with('[') {
         let mut depth = 0;

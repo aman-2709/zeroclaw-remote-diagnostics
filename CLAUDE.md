@@ -75,24 +75,50 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 
 ## Build / Test / Lint
 
-> TBD — No source code exists yet. Fill in as development begins.
-
 ```bash
-# Build
-# TBD
+# Build all crates
+cargo build --workspace
 
-# Test
-# TBD
+# Build release (optimized for edge devices)
+cargo build --profile release-edge -p zc-fleet-agent
+
+# Test all crates
+cargo test --workspace
+
+# Test a single crate
+cargo test -p zc-canbus-tools
+cargo test -p zc-log-tools
+cargo test -p zc-mqtt-channel
+cargo test -p zc-fleet-agent
+
+# Run a single test
+cargo test -p zc-fleet-agent execute_log_tool_succeeds
 
 # Lint
-# TBD
+cargo clippy --workspace -- -D warnings
+
+# Format
+cargo fmt --all
+cargo fmt --all -- --check   # check only
 ```
 
 ## Project Structure
 
-> TBD — To be defined when repository is initialized. Expected components:
-> - Edge agent (Rust/ZeroClaw + Ollama integration)
-> - CAN bus tool module
-> - Log analysis tool module
-> - Cloud infrastructure (IoT Core, Lambda, API Gateway)
-> - Frontend web UI
+```
+crates/
+  zc-protocol/       — Shared types: commands, telemetry, device, DTC, shadows, topics
+  zc-canbus-tools/   — CAN bus / OBD-II diagnostic tools (5 tools, trait-based)
+  zc-log-tools/      — Multi-format log parsing + 4 analysis tools
+  zc-mqtt-channel/   — MQTT channel abstraction for AWS IoT Core (mTLS)
+  zc-fleet-agent/    — Edge agent binary (wires all crates + MQTT event loop)
+  zc-cloud-api/      — Cloud API server (Axum) — scaffold only
+```
+
+### Key Patterns
+- **Trait abstractions** for testability: `CanInterface`, `LogSource`, `Channel`
+- **Mock implementations** for testing without hardware: `MockCanInterface`, `MockLogSource`, `MockChannel`
+- **ToolResult** struct pattern (tool_name, success, data, summary, error) — duplicated in canbus + log crates
+- **CanTool / LogTool traits**: name(), description(), parameters_schema(), execute(args, backend)
+- **all_tools()** factory functions return `Vec<Box<dyn XxxTool>>`
+- Edition 2024 Rust — use `if let ... && let ...` for clippy collapsible_if
+- `cargo fmt --all` (not `--workspace`) on this Rust version
