@@ -1,4 +1,18 @@
+//! ZeroClaw Cloud API — fleet management REST server.
+//!
+//! Provides REST endpoints for device registry, command dispatch,
+//! telemetry queries, and real-time updates via WebSocket (Phase 2).
+
+mod config;
+mod error;
+mod routes;
+mod state;
+
+use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
+
+use crate::config::ApiConfig;
+use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,14 +23,19 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zc-cloud-api starting");
 
-    // TODO Phase 2 Week 6: Wire Axum server with:
-    // - PostgreSQL connection pool (sqlx)
-    // - REST API routes (devices, commands, telemetry, fleets, audit)
-    // - WebSocket hub for real-time updates
-    // - MQTT bridge to AWS IoT Core
-    // - JWT authentication middleware
-    // - CORS and compression middleware
+    // Phase 2: Load config from file/env. For now, use defaults.
+    let config = ApiConfig::default();
 
-    tracing::info!("zc-cloud-api ready (skeleton — no routes wired yet)");
+    // Phase 2: Replace with PostgreSQL-backed state.
+    let state = AppState::with_sample_data();
+
+    let app = routes::build_router(state);
+
+    let addr = format!("{}:{}", config.host, config.port);
+    let listener = TcpListener::bind(&addr).await?;
+    tracing::info!(addr = %addr, "listening");
+
+    axum::serve(listener, app).await?;
+
     Ok(())
 }
