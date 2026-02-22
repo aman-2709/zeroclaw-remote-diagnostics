@@ -15,7 +15,7 @@
 	let command = $state('');
 	let loading = $state(false);
 	let error = $state<string | null>(null);
-	let success = $state<string | null>(null);
+	let lastResult = $state<CommandEnvelope | null>(null);
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -23,7 +23,7 @@
 
 		loading = true;
 		error = null;
-		success = null;
+		lastResult = null;
 
 		try {
 			const envelope = await api.sendCommand({
@@ -32,7 +32,7 @@
 				command: command.trim(),
 				initiated_by: 'dashboard-user'
 			});
-			success = `Command sent (${envelope.id})`;
+			lastResult = envelope;
 			command = '';
 			onSuccess?.(envelope);
 		} catch (err) {
@@ -71,7 +71,32 @@
 		<p class="text-sm text-danger">{error}</p>
 	{/if}
 
-	{#if success}
-		<p class="text-sm text-success">{success}</p>
+	{#if lastResult}
+		<div class="rounded-md border border-border bg-surface p-3 text-sm">
+			<div class="flex items-center gap-2 text-success font-medium">
+				Command dispatched
+				<span class="font-mono text-xs text-text-muted">{lastResult.id}</span>
+			</div>
+			{#if lastResult.parsed_intent}
+				<div class="mt-2 space-y-1 text-xs">
+					<div>
+						<span class="text-text-muted">Tool:</span>
+						<span class="font-mono font-medium">{lastResult.parsed_intent.tool_name}</span>
+					</div>
+					{#if Object.keys(lastResult.parsed_intent.tool_args).length > 0}
+						<div>
+							<span class="text-text-muted">Args:</span>
+							<span class="font-mono">{JSON.stringify(lastResult.parsed_intent.tool_args)}</span>
+						</div>
+					{/if}
+					<div>
+						<span class="text-text-muted">Confidence:</span>
+						<span class="font-mono">{(lastResult.parsed_intent.confidence * 100).toFixed(0)}%</span>
+					</div>
+				</div>
+			{:else}
+				<p class="mt-1 text-xs text-warning">Command could not be parsed — will require cloud inference.</p>
+			{/if}
+		</div>
 	{/if}
 </form>

@@ -4,13 +4,21 @@ export type CommandStatus = 'pending' | 'sent' | 'received' | 'executing' | 'com
 
 export type InferenceTier = 'local' | 'cloud';
 
+export interface ParsedIntent {
+	tool_name: string;
+	tool_args: Record<string, unknown>;
+	confidence: number;
+}
+
 export interface CommandEnvelope {
 	id: string;
 	fleet_id: string;
 	device_id: string;
 	natural_language: string;
+	parsed_intent: ParsedIntent | null;
 	initiated_by: string;
-	timestamp: string;
+	created_at: string;
+	timeout_secs: number;
 }
 
 export interface CommandResponse {
