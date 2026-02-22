@@ -50,6 +50,9 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres",
 # CAN bus
 socketcan = "3.5"
 
+# Text processing
+regex = "1.11"
+
 # AWS
 aws-config = "1.5"
 aws-sdk-iotdataplane = "1.0"
