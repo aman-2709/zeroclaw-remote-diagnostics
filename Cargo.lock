@@ -4139,6 +4139,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "zc-e2e-tests"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "http-body-util",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "uuid",
+ "wiremock",
+ "zc-canbus-tools",
+ "zc-cloud-api",
+ "zc-fleet-agent",
+ "zc-log-tools",
+ "zc-mqtt-channel",
+ "zc-protocol",
+]
+
+[[package]]
 name = "zc-fleet-agent"
 version = "0.1.0"
 dependencies = [

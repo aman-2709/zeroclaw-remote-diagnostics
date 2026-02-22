@@ -4,23 +4,15 @@
 //! telemetry queries, real-time updates via WebSocket, and an optional
 //! MQTT bridge to forward commands to devices and ingest responses.
 
-mod config;
-pub mod db;
-mod error;
-pub mod events;
-pub mod inference;
-mod mqtt_bridge;
-mod routes;
-mod state;
-
 use std::sync::Arc;
 
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use crate::config::ApiConfig;
-use crate::inference::InferenceEngine;
-use crate::state::AppState;
+use zc_cloud_api::config::ApiConfig;
+use zc_cloud_api::inference::InferenceEngine;
+use zc_cloud_api::state::AppState;
+use zc_cloud_api::{db, inference, mqtt_bridge, routes};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

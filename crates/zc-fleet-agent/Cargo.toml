@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "zc_fleet_agent"
+path = "src/lib.rs"
+
 [[bin]]
 name = "zc-fleet-agent"
 path = "src/main.rs"

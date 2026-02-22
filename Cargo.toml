@@ -7,6 +7,7 @@ members = [
     "crates/zc-log-tools",
     "crates/zc-fleet-agent",
     "crates/zc-cloud-api",
+    "crates/zc-e2e-tests",
 ]
 
 [workspace.package]
@@ -66,6 +67,8 @@ zc-protocol = { path = "crates/zc-protocol" }
 zc-canbus-tools = { path = "crates/zc-canbus-tools" }
 zc-mqtt-channel = { path = "crates/zc-mqtt-channel" }
 zc-log-tools = { path = "crates/zc-log-tools" }
+zc-fleet-agent = { path = "crates/zc-fleet-agent" }
+zc-cloud-api = { path = "crates/zc-cloud-api" }
 
 [profile.release]
 lto = true

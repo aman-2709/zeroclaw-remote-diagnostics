@@ -3,19 +3,14 @@
 //! Wires MQTT connectivity, CAN bus tools, and log analysis into a
 //! single binary that runs on ARM edge devices.
 
-mod config;
-mod executor;
-mod heartbeat;
-mod inference;
-mod mqtt_loop;
-mod registry;
-
 use std::time::Duration;
 
 use tracing_subscriber::EnvFilter;
 
-use crate::config::AgentConfig;
-use crate::registry::ToolRegistry;
+use zc_fleet_agent::config::AgentConfig;
+use zc_fleet_agent::inference;
+use zc_fleet_agent::registry::ToolRegistry;
+use zc_fleet_agent::{heartbeat, mqtt_loop};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
