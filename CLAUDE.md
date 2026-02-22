@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 1 complete — all 6 Rust crates + Terraform infrastructure
+**Status**: Phase 2 in progress — PostgreSQL + WebSocket real-time events
 
 ## Architecture (Three Layers)
 
@@ -111,7 +111,7 @@ crates/
   zc-log-tools/      — Multi-format log parsing + 4 analysis tools
   zc-mqtt-channel/   — MQTT channel abstraction for AWS IoT Core (mTLS)
   zc-fleet-agent/    — Edge agent binary (wires all crates + MQTT event loop)
-  zc-cloud-api/      — Cloud API server (Axum REST API, in-memory state)
+  zc-cloud-api/      — Cloud API server (Axum REST, PostgreSQL/SQLx, WebSocket)
 infra/
   modules/
     networking/        — VPC, subnets (public/private), NAT, routing
@@ -120,8 +120,9 @@ infra/
     data/              — RDS PostgreSQL 16, Secrets Manager
     monitoring/        — CloudWatch alarms, dashboard
 frontend/                — SvelteKit 5 + Tailwind CSS 4 (SPA, adapter-static)
-  src/lib/types/         — TypeScript types mirroring zc-protocol
+  src/lib/types/         — TypeScript types mirroring zc-protocol + WsEvent
   src/lib/api/client.ts  — API client for cloud API endpoints
+  src/lib/stores/        — Svelte stores (WebSocket real-time connection)
   src/lib/components/    — Reusable components (StatusBadge, DeviceCard, CommandForm)
   src/routes/            — Pages: devices list, device detail, commands history
 ```
@@ -132,6 +133,8 @@ frontend/                — SvelteKit 5 + Tailwind CSS 4 (SPA, adapter-static)
 - **ToolResult** struct pattern (tool_name, success, data, summary, error) — duplicated in canbus + log crates
 - **CanTool / LogTool traits**: name(), description(), parameters_schema(), execute(args, backend)
 - **all_tools()** factory functions return `Vec<Box<dyn XxxTool>>`
+- **Dual-mode AppState**: optional `PgPool` + in-memory fallback (tests pass without DB)
+- **Broadcast events**: `tokio::sync::broadcast` channel on AppState for WebSocket push
 - Edition 2024 Rust — use `if let ... && let ...` for clippy collapsible_if
 - `cargo fmt --all` (not `--workspace`) on this Rust version
 

@@ -9,11 +9,13 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use uuid::Uuid;
 
 use zc_protocol::commands::{CommandEnvelope, CommandResponse};
 use zc_protocol::device::{DeviceInfo, DeviceStatus, HardwareType};
+
+use crate::events::WsEvent;
 
 /// Shared application state, wrapped in `Arc` for Axum handler sharing.
 #[derive(Clone)]
@@ -24,6 +26,8 @@ pub struct AppState {
     pub devices: Arc<RwLock<HashMap<String, DeviceInfo>>>,
     /// In-memory command log (used when pool is None).
     pub commands: Arc<RwLock<Vec<CommandRecord>>>,
+    /// Broadcast channel for real-time WebSocket events.
+    pub event_tx: broadcast::Sender<WsEvent>,
 }
 
 /// A command with its response (if available).
@@ -37,19 +41,23 @@ pub struct CommandRecord {
 impl AppState {
     /// Create state backed by a PostgreSQL pool.
     pub fn with_pool(pool: PgPool) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
         Self {
             pool: Some(pool),
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
+            event_tx,
         }
     }
 
     /// Create in-memory state (for tests).
     pub fn new() -> Self {
+        let (event_tx, _) = broadcast::channel(256);
         Self {
             pool: None,
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
+            event_tx,
         }
     }
 
@@ -81,10 +89,12 @@ impl AppState {
             );
         }
 
+        let (event_tx, _) = broadcast::channel(256);
         Self {
             pool: None,
             devices: Arc::new(RwLock::new(devices)),
             commands: Arc::new(RwLock::new(Vec::new())),
+            event_tx,
         }
     }
 }
