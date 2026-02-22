@@ -1,7 +1,24 @@
-pub mod config;
+//! MQTT channel for AWS IoT Core communication.
+//!
+//! Provides a typed MQTT abstraction for the ZeroClaw fleet agent:
+//! - `Channel` trait for publish/subscribe (mockable in tests)
+//! - `MqttChannel` with TLS (mTLS) for production
+//! - `MockChannel` for testing without a broker
+//! - `ShadowClient` for device shadow operations
+//! - `IncomingMessage` classification for dispatching events
 
-// To be implemented in Phase 2:
-// pub mod channel;      // MqttChannel implementing ZeroClaw Channel trait
-// pub mod shadows;      // Device shadow get/update
-// pub mod provisioning; // Fleet Provisioning by Claim
-// pub mod tls;          // X.509 cert loading, mTLS
+pub mod channel;
+pub mod config;
+pub mod error;
+pub mod handler;
+pub mod mock;
+pub mod shadows;
+pub mod tls;
+
+// Re-exports for convenience.
+pub use channel::{Channel, MqttChannel};
+pub use config::MqttConfig;
+pub use error::{MqttError, MqttResult};
+pub use handler::{IncomingMessage, classify};
+pub use mock::MockChannel;
+pub use shadows::ShadowClient;
