@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { api, ApiClientError } from '$lib/api/client';
-	import type { CommandSummary } from '$lib/types';
+	import type { CommandSummary, WsEvent } from '$lib/types';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
+	import { wsStore } from '$lib/stores/websocket.svelte';
+	import { onMount } from 'svelte';
 
 	let commands = $state<CommandSummary[]>([]);
 	let loading = $state(true);
@@ -19,8 +21,31 @@
 		}
 	}
 
-	$effect(() => {
+	onMount(() => {
 		loadCommands();
+
+		const unsub = wsStore.onEvent((event: WsEvent) => {
+			if (event.type === 'command_dispatched') {
+				// Prepend the new command to the list
+				const summary: CommandSummary = {
+					id: event.command_id,
+					device_id: event.device_id,
+					command: event.command,
+					status: 'pending',
+					created_at: event.created_at
+				};
+				commands = [summary, ...commands];
+			} else if (event.type === 'command_response') {
+				// Update the command status in-place
+				commands = commands.map((cmd) =>
+					cmd.id === event.command_id
+						? { ...cmd, status: (event.status as CommandSummary['status']) }
+						: cmd
+				);
+			}
+		});
+
+		return unsub;
 	});
 </script>
 

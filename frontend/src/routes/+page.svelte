@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { api, ApiClientError } from '$lib/api/client';
-	import type { DeviceSummary } from '$lib/types';
+	import type { DeviceSummary, WsEvent } from '$lib/types';
 	import DeviceCard from '$lib/components/DeviceCard.svelte';
+	import { wsStore } from '$lib/stores/websocket.svelte';
+	import { onMount } from 'svelte';
 
 	let devices = $state<DeviceSummary[]>([]);
 	let loading = $state(true);
@@ -19,8 +21,27 @@
 		}
 	}
 
-	$effect(() => {
+	onMount(() => {
 		loadDevices();
+
+		const unsub = wsStore.onEvent((event: WsEvent) => {
+			if (event.type === 'device_heartbeat') {
+				// Update the heartbeat timestamp for this device
+				devices = devices.map((d) =>
+					d.device_id === event.device_id
+						? { ...d, last_heartbeat: event.timestamp, status: 'online' as const }
+						: d
+				);
+			} else if (event.type === 'device_status_changed') {
+				devices = devices.map((d) =>
+					d.device_id === event.device_id
+						? { ...d, status: event.new_status as DeviceSummary['status'] }
+						: d
+				);
+			}
+		});
+
+		return unsub;
 	});
 </script>
 

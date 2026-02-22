@@ -3,10 +3,12 @@
 pub mod commands;
 pub mod devices;
 pub mod health;
+pub mod heartbeat;
 pub mod telemetry;
+pub mod ws;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -31,7 +33,11 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/commands/{id}", get(commands::get_command))
         // Telemetry endpoints
-        .route("/devices/{id}/telemetry", get(telemetry::get_telemetry));
+        .route("/devices/{id}/telemetry", get(telemetry::get_telemetry))
+        // Heartbeat ingestion
+        .route("/heartbeat", post(heartbeat::ingest_heartbeat))
+        // WebSocket endpoint
+        .route("/ws", get(ws::ws_handler));
 
     Router::new()
         .route("/health", get(health::health))

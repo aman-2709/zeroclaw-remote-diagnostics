@@ -7,6 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
+use crate::events::WsEvent;
 use crate::state::{AppState, CommandRecord};
 use zc_protocol::commands::CommandEnvelope;
 
@@ -95,6 +96,15 @@ pub async fn send_command(
         device_id = %req.device_id,
         "command dispatched"
     );
+
+    // Broadcast real-time event (ignore error if no receivers).
+    let _ = state.event_tx.send(WsEvent::CommandDispatched {
+        command_id: envelope.id,
+        device_id: envelope.device_id.clone(),
+        command: envelope.natural_language.clone(),
+        initiated_by: envelope.initiated_by.clone(),
+        created_at: envelope.created_at,
+    });
 
     Ok(Json(envelope))
 }

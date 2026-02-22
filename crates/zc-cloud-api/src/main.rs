@@ -6,6 +6,7 @@
 mod config;
 pub mod db;
 mod error;
+pub mod events;
 mod routes;
 mod state;
 
