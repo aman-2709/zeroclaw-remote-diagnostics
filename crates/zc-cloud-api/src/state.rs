@@ -42,15 +42,15 @@ pub struct CommandRecord {
 }
 
 impl AppState {
-    /// Create state backed by a PostgreSQL pool.
-    pub fn with_pool(pool: PgPool) -> Self {
+    /// Create state backed by a PostgreSQL pool with a custom inference engine.
+    pub fn with_pool(pool: PgPool, inference: Arc<dyn InferenceEngine>) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
             pool: Some(pool),
             devices: Arc::new(RwLock::new(HashMap::new())),
             commands: Arc::new(RwLock::new(Vec::new())),
             event_tx,
-            inference: Arc::new(crate::inference::RuleBasedEngine::new()),
+            inference,
         }
     }
 

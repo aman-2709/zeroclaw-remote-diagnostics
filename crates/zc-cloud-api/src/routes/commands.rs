@@ -58,11 +58,10 @@ pub async fn send_command(
     );
 
     // Run NL inference to parse command into tool invocation.
-    let parsed_intent = state.inference.parse(&req.command).await;
-    let inference_tier = if parsed_intent.is_some() {
-        Some(state.inference.tier_name().to_string())
-    } else {
-        None
+    let parse_result = state.inference.parse(&req.command).await;
+    let (parsed_intent, inference_tier) = match &parse_result {
+        Some(r) => (Some(r.intent.clone()), Some(r.tier.clone())),
+        None => (None, None),
     };
     envelope.parsed_intent = parsed_intent.clone();
 
