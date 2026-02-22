@@ -11,6 +11,7 @@ use zc_mqtt_channel::{IncomingMessage, MqttChannel, classify};
 use zc_protocol::commands::CommandStatus;
 
 use crate::executor::CommandExecutor;
+use crate::inference::OllamaClient;
 use crate::registry::ToolRegistry;
 
 /// Drive the MQTT event loop and dispatch incoming messages.
@@ -23,8 +24,9 @@ pub async fn run(
     registry: &ToolRegistry,
     can_interface: &dyn CanInterface,
     log_source: &dyn LogSource,
+    ollama: Option<&OllamaClient>,
 ) {
-    let executor = CommandExecutor::new(registry, can_interface, log_source);
+    let executor = CommandExecutor::new(registry, can_interface, log_source, ollama);
 
     loop {
         match eventloop.poll().await {

@@ -53,6 +53,9 @@ socketcan = "3.5"
 # Text processing
 regex = "1.11"
 
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # AWS
 aws-config = "1.5"
 aws-sdk-iotdataplane = "1.0"
