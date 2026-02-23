@@ -20,33 +20,92 @@
 	let lastResult = $state<CommandEnvelope | null>(null);
 	let awaitingResponse = $state(false);
 	let responseText = $state<string | null>(null);
+	let responseData = $state<unknown | null>(null);
 	let responseError = $state<string | null>(null);
+	let elapsedSecs = $state(0);
 
 	let unsub: (() => void) | null = null;
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let tickTimer: ReturnType<typeof setInterval> | null = null;
+
+	const POLL_INTERVAL_MS = 3000;
+	const TIMEOUT_MS = 60000;
 
 	onMount(() => {
 		return () => {
-			unsub?.();
+			cleanup();
 		};
 	});
 
-	function subscribeToResponse(commandId: string) {
+	function cleanup() {
 		unsub?.();
+		unsub = null;
+		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+		if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+	}
+
+	function handleResponse(text: string | null, data: unknown | null, status: string) {
+		cleanup();
+		awaitingResponse = false;
+		responseText = text;
+		responseData = data;
+		if (status === 'failed') {
+			responseError = 'Command execution failed on device';
+		}
+	}
+
+	function waitForResponse(commandId: string) {
+		cleanup();
 		awaitingResponse = true;
 		responseText = null;
+		responseData = null;
 		responseError = null;
+		elapsedSecs = 0;
 
+		const startTime = Date.now();
+
+		// Tick counter for elapsed time display
+		tickTimer = setInterval(() => {
+			elapsedSecs = Math.floor((Date.now() - startTime) / 1000);
+		}, 1000);
+
+		// Strategy 1: WebSocket push (instant)
 		unsub = wsStore.onEvent((event: WsEvent) => {
 			if (event.type === 'command_response' && event.command_id === commandId) {
-				awaitingResponse = false;
-				responseText = event.response_text ?? null;
-				if (event.status === 'failed') {
-					responseError = 'Command execution failed on device';
-				}
-				unsub?.();
-				unsub = null;
+				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status);
 			}
 		});
+
+		// Strategy 2: Polling fallback (catches missed WS events)
+		pollTimer = setInterval(async () => {
+			// Timeout check
+			if (Date.now() - startTime > TIMEOUT_MS) {
+				cleanup();
+				awaitingResponse = false;
+				responseError = 'Response timed out — device may be offline or processing is slow.';
+				return;
+			}
+
+			try {
+				// getCommand returns CommandRecord but the backend shape varies
+				// (in-memory vs DB). Normalize via unknown → plain object access.
+				const raw: unknown = await api.getCommand(commandId);
+				const obj = raw as Record<string, unknown>;
+
+				// In-memory: { command, response: { status, ... }, created_at }
+				// DB mode:   { id, status, response_text, response_data, ... }
+				const resp = obj.response as Record<string, unknown> | undefined;
+				const status = (resp?.status ?? obj.status) as string | undefined;
+				const text = (resp?.response_text ?? obj.response_text) as string | null;
+				const data = (resp?.response_data ?? obj.response_data) as unknown | null;
+
+				if (status && status !== 'pending' && status !== 'sent' && status !== 'received' && status !== 'executing') {
+					handleResponse(text ?? null, data ?? null, status);
+				}
+			} catch {
+				// Poll failed — will retry next interval
+			}
+		}, POLL_INTERVAL_MS);
 	}
 
 	async function handleSubmit(e: Event) {
@@ -58,6 +117,7 @@
 		lastResult = null;
 		awaitingResponse = false;
 		responseText = null;
+		responseData = null;
 		responseError = null;
 
 		try {
@@ -69,7 +129,7 @@
 			});
 			lastResult = envelope;
 			command = '';
-			subscribeToResponse(envelope.id);
+			waitForResponse(envelope.id);
 			onSuccess?.(envelope);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to send command';
@@ -100,6 +160,15 @@
 			default:
 				return 'text-success';
 		}
+	}
+
+	function formatEntries(data: unknown): string[] | null {
+		if (!data || typeof data !== 'object') return null;
+		const obj = data as Record<string, unknown>;
+		const inner = obj.data as Record<string, unknown> | undefined;
+		const entries = inner?.entries;
+		if (!Array.isArray(entries)) return null;
+		return entries.map((e: Record<string, unknown>) => e.message as string).filter(Boolean);
 	}
 </script>
 
@@ -167,7 +236,7 @@
 			{#if awaitingResponse}
 				<div class="mt-2 flex items-center gap-2 text-xs text-text-muted">
 					<span class="inline-block h-3 w-3 animate-pulse rounded-full bg-warning"></span>
-					Waiting for device response...
+					Waiting for device response... ({elapsedSecs}s)
 				</div>
 			{/if}
 
@@ -176,6 +245,21 @@
 					<span class="font-medium text-success">Response:</span>
 					<pre class="mt-1 whitespace-pre-wrap break-words font-mono text-text">{responseText}</pre>
 				</div>
+			{/if}
+
+			{#if responseData}
+				{@const logLines = formatEntries(responseData)}
+				{#if logLines}
+					<details class="mt-2 rounded border border-border bg-surface p-2 text-xs" open>
+						<summary class="cursor-pointer font-medium text-text-muted">Log Entries ({logLines.length})</summary>
+						<pre class="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-text leading-relaxed">{logLines.join('\n')}</pre>
+					</details>
+				{:else}
+					<details class="mt-2 rounded border border-border bg-surface p-2 text-xs">
+						<summary class="cursor-pointer font-medium text-text-muted">Response Data</summary>
+						<pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-text">{JSON.stringify(responseData, null, 2)}</pre>
+					</details>
+				{/if}
 			{/if}
 
 			{#if responseError}

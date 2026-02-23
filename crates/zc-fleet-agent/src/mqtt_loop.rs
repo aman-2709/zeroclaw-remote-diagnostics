@@ -16,9 +16,9 @@ use crate::registry::ToolRegistry;
 use crate::shadow_sync::SharedShadowState;
 
 /// Maximum MQTT payload size in bytes.
-/// Leaves headroom for MQTT packet headers (~100 bytes) and topic string
-/// below the default broker limit of 10,240 bytes.
-const MAX_MQTT_PAYLOAD: usize = 9 * 1024;
+/// AWS IoT Core supports 128 KB payloads. We use 128 KB minus headroom
+/// for MQTT packet headers and topic strings.
+const MAX_MQTT_PAYLOAD: usize = 128 * 1024;
 
 /// Drive the MQTT event loop and dispatch incoming messages.
 ///
@@ -148,8 +148,57 @@ fn cap_response_size(mut response: CommandResponse) -> CommandResponse {
 
     let original_len = bytes.len();
 
-    // response_data is the only field that can grow unboundedly (tool output).
-    // Replace it with a size note and put a summary in response_text.
+    // Strategy 1: If response_data has a "data.entries" array (log tools),
+    // trim entries from the front until it fits.
+    let has_entries = response
+        .response_data
+        .as_ref()
+        .and_then(|d| d.get("data"))
+        .and_then(|d| d.get("entries"))
+        .and_then(|e| e.as_array())
+        .is_some_and(|a| a.len() > 1);
+
+    if has_entries {
+        let mut data = response.response_data.take().unwrap();
+
+        // Extract the entries array so we can mutate it freely.
+        let mut entries = data["data"]["entries"].as_array().cloned().unwrap();
+        let original_count = entries.len();
+
+        // Estimate bytes to skip close to target in one jump
+        let excess = original_len - MAX_MQTT_PAYLOAD;
+        let bytes_per_entry = original_len / original_count;
+        let skip = (excess / bytes_per_entry).min(entries.len() - 1);
+        if skip > 0 {
+            entries.drain(..skip);
+        }
+
+        // Fine-tune: remove oldest entries one at a time
+        loop {
+            data["data"]["entries"] = serde_json::Value::Array(entries.clone());
+            data["data"]["shown"] = serde_json::json!(entries.len());
+            response.response_data = Some(data.clone());
+
+            if serde_json::to_vec(&response).is_ok_and(|b| b.len() <= MAX_MQTT_PAYLOAD) {
+                tracing::info!(
+                    command_id = %response.command_id,
+                    original_entries = original_count,
+                    kept_entries = entries.len(),
+                    "trimmed log entries to fit MQTT payload"
+                );
+                return response;
+            }
+            if entries.len() <= 1 {
+                break;
+            }
+            entries.remove(0);
+        }
+
+        // Couldn't fit even with 1 entry — fall through to nuclear option.
+        response.response_data = Some(data);
+    }
+
+    // Strategy 2 (fallback): Drop response_data entirely, keep summary in response_text.
     if let Some(data) = response.response_data.take() {
         let tool_name = data
             .get("tool_name")
@@ -165,7 +214,6 @@ fn cap_response_size(mut response: CommandResponse) -> CommandResponse {
             "original_bytes": original_len,
         }));
 
-        // Preserve the tool summary if one exists
         if let Some(s) = summary {
             response.response_text = Some(format!(
                 "{tool_name}: {s} [response truncated from {original_len}B]"
@@ -306,21 +354,35 @@ mod tests {
     }
 
     #[test]
-    fn oversized_response_data_is_truncated() {
-        // Build a response_data with ~12KB of log lines
+    fn oversized_entries_are_trimmed() {
+        // Build a response_data with entries that exceed 128KB
+        let entries: Vec<serde_json::Value> = (0..1500)
+            .map(|i| {
+                serde_json::json!({
+                    "line": i,
+                    "message": format!("Feb 23 01:34:{:02} xl4 syslog[1234]: {}", i % 60, "x".repeat(100)),
+                    "severity": "info",
+                    "source": null,
+                    "timestamp": null,
+                })
+            })
+            .collect();
         let big_data = serde_json::json!({
             "tool_name": "tail_logs",
-            "summary": "Last 100 lines from /var/log/syslog",
+            "summary": "Last 1500 lines from /var/log/syslog",
             "success": true,
             "data": {
-                "lines": vec!["x".repeat(120); 100], // 100 lines × ~120 chars
+                "entries": entries,
+                "shown": 1500,
+                "total_entries": 50000,
+                "path": "/var/log/syslog",
             }
         });
         let resp = make_response(Some(big_data));
         let original_bytes = serde_json::to_vec(&resp).unwrap().len();
         assert!(
             original_bytes > MAX_MQTT_PAYLOAD,
-            "test data must exceed limit"
+            "test data must exceed limit: {original_bytes}"
         );
 
         let capped = cap_response_size(resp);
@@ -331,11 +393,45 @@ mod tests {
             "capped response must fit: {capped_bytes}"
         );
 
-        // response_data should have truncated marker
+        // Should have kept some entries (trimmed, not nuked)
+        let data = capped.response_data.unwrap();
+        let kept = data["data"]["entries"].as_array().unwrap().len();
+        assert!(kept > 0, "should keep some entries");
+        assert!(kept < 1500, "should have trimmed: kept {kept}");
+        // "shown" metadata should reflect trimmed count
+        assert_eq!(data["data"]["shown"], kept);
+    }
+
+    #[test]
+    fn oversized_non_entries_falls_back_to_nuke() {
+        // response_data without entries array — fallback to nuclear truncation
+        let big_data = serde_json::json!({
+            "tool_name": "tail_logs",
+            "summary": "Last 100 lines from /var/log/syslog",
+            "success": true,
+            "data": {
+                "lines": vec!["x".repeat(200); 1000],
+            }
+        });
+        let resp = make_response(Some(big_data));
+        let original_bytes = serde_json::to_vec(&resp).unwrap().len();
+        assert!(
+            original_bytes > MAX_MQTT_PAYLOAD,
+            "test data must exceed limit: {original_bytes}"
+        );
+
+        let capped = cap_response_size(resp);
+
+        let capped_bytes = serde_json::to_vec(&capped).unwrap().len();
+        assert!(
+            capped_bytes <= MAX_MQTT_PAYLOAD,
+            "capped response must fit: {capped_bytes}"
+        );
+
+        // Should have fallback truncation marker
         let data = capped.response_data.unwrap();
         assert_eq!(data["truncated"], true);
 
-        // response_text should contain the tool summary
         let text = capped.response_text.unwrap();
         assert!(text.contains("tail_logs"));
         assert!(text.contains("truncated"));

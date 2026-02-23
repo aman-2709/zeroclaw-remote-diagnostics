@@ -106,6 +106,32 @@ Frontend-only phase. No backend changes. All data already available via existing
 - [x] 3 new tests (small passthrough, oversized truncated, no-data unaffected)
 - [x] 379 total Rust tests passing, clippy clean
 
+## Phase 10: query_journal Tool — Systemd Journal Queries
+- [x] New tool: crates/zc-log-tools/src/tools/query_journal.rs (QueryJournal implementing LogTool)
+- [x] Update tools/mod.rs: 4 → 5 tools, add QueryJournal to all_tools()
+- [x] Update fleet-agent inference.rs: SYSTEM_PROMPT + KNOWN_TOOLS (9 → 10)
+- [x] Update fleet-agent registry.rs: test assertions (9 → 10)
+- [x] Update cloud-api rules.rs: pattern matching for journal/service queries + extract_service_name helper
+- [x] Update cloud-api bedrock.rs: SYSTEM_PROMPT + KNOWN_TOOLS (9 → 10)
+- [x] Update e2e inference_paths.rs: rename + add query_journal to tool_commands
+- [x] Update e2e shadow_sync.rs: tool_count fixture 9 → 10
+- [x] 392 tests passing (up from 379), clippy clean, fmt clean
+
+## Phase 11: Response Data Pipeline + MQTT Packet Fix + Robust Frontend
+Fix response_data being lost in transit from edge agent → cloud API → WebSocket → frontend.
+
+- [x] Add `response_data` field to `WsEvent::CommandResponse` (events.rs)
+- [x] Forward `response_data` in both broadcast sites (mqtt_bridge.rs, routes/responses.rs)
+- [x] Add `response_data` to frontend WsEvent type (types/index.ts)
+- [x] Raise `MAX_MQTT_PAYLOAD` from 9KB to 128KB (AWS IoT Core limit)
+- [x] Smart entry trimming in `cap_response_size` — trims oldest log entries to fit before nuclear drop
+- [x] Raise rumqttc `max_packet_size` from 10KB default to 256KB (both TLS and plaintext constructors)
+- [x] Rewrite CommandForm with robust response handling: WS push + polling fallback (3s) + timeout (60s)
+- [x] Add elapsed time counter to "Waiting for response" indicator
+- [x] Render log entries as readable lines (not raw JSON) when response_data has entries array
+- [x] Update README: log tools 4→5, agent mode, shadow/telemetry endpoints, local dev setup, test count
+- [x] 393 tests passing, clippy clean, fmt clean, svelte-check clean
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)

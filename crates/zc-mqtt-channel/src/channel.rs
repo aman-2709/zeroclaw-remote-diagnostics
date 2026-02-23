@@ -67,6 +67,8 @@ impl MqttChannel {
         let mut options =
             MqttOptions::new(&config.client_id, &config.broker_host, config.broker_port);
         options.set_keep_alive(std::time::Duration::from_secs(config.keepalive_secs.into()));
+        // AWS IoT Core supports 128 KB payloads; rumqttc defaults to 10 KB.
+        options.set_max_packet_size(256 * 1024, 256 * 1024);
 
         let transport = tls::load_tls_transport(config)?;
         options.set_transport(transport);
@@ -93,6 +95,7 @@ impl MqttChannel {
     ) -> (Self, EventLoop) {
         let mut options = MqttOptions::new(client_id, host, port);
         options.set_keep_alive(std::time::Duration::from_secs(30));
+        options.set_max_packet_size(256 * 1024, 256 * 1024);
 
         let (client, eventloop) = AsyncClient::new(options, 64);
 
