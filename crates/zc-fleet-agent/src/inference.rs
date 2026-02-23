@@ -2,7 +2,7 @@
 //!
 //! Calls the local Ollama HTTP API (`/api/chat`) to parse natural-language
 //! operator commands into structured intents. Supports three action types:
-//! - **tool**: Invoke one of 9 registered diagnostic tools
+//! - **tool**: Invoke one of 10 registered diagnostic tools
 //! - **shell**: Execute a safe system command on the device
 //! - **reply**: Return a conversational response (no execution)
 
@@ -24,6 +24,7 @@ Use this for vehicle diagnostics and log analysis. Available tools:
 7. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
 8. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
 9. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
+10. query_journal — Query systemd journal for a service. Args: {"unit": "nginx.service", "lines": 50}
 
 Response format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
 
@@ -61,6 +62,7 @@ Examples:
 - Be generous in interpretation — operators use casual language
 - For vehicle/diagnostic queries → action: tool
 - For ANY log-related queries (show logs, tail logs, search logs, system logs, syslog, recent logs) → action: tool (use tail_logs, search_logs, analyze_errors, or log_stats)
+- For journal/service log queries (e.g. "show nginx logs", "journal for sshd") → action: tool (use query_journal)
 - For system/OS queries (CPU, memory, disk, network, processes) → action: shell
 - For conversation/greetings → action: reply
 - When unsure, prefer "reply" with a helpful message over returning nothing"#;
@@ -76,6 +78,7 @@ const KNOWN_TOOLS: &[&str] = &[
     "analyze_errors",
     "log_stats",
     "tail_logs",
+    "query_journal",
 ];
 
 /// Log tools that require a "path" argument.

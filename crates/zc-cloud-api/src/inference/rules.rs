@@ -202,6 +202,34 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // query_journal: "journal for X", "journalctl X", "service logs for X", "systemd logs"
+    if matches_any(
+        lower,
+        &[
+            "journal for",
+            "journalctl",
+            "service log",
+            "systemd log",
+            "show journal",
+        ],
+    ) {
+        let unit = extract_service_name(lower).unwrap_or("systemd-journald.service");
+        let lines = extract_line_count(lower).unwrap_or(50);
+        return Some(ParsedIntent {
+            action: ActionKind::Tool,
+            tool_name: "query_journal".into(),
+            tool_args: json!({
+                "unit": unit,
+                "lines": lines,
+            }),
+            confidence: if extract_service_name(lower).is_some() {
+                0.90
+            } else {
+                0.75
+            },
+        });
+    }
+
     None
 }
 
@@ -303,6 +331,36 @@ fn extract_search_query(text: &str) -> Option<&str> {
         let query = rest.trim().trim_start_matches("s ");
         if !query.is_empty() {
             return Some(query);
+        }
+    }
+    None
+}
+
+/// Extract a service/unit name from "journal for nginx", "journalctl sshd.service".
+fn extract_service_name(text: &str) -> Option<&str> {
+    // "journal for <service>"
+    if let Some(pos) = text.find("journal for ") {
+        let rest = text[pos + 12..].trim();
+        let name = rest.split_whitespace().next()?;
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    // "journalctl <service>"
+    if let Some(rest) = text.strip_prefix("journalctl ") {
+        let name = rest.split_whitespace().next()?;
+        if !name.is_empty() && !name.starts_with('-') {
+            return Some(name);
+        }
+    }
+    // "service logs for <service>" / "service log for <service>"
+    if let Some(pos) = text.find("service log") {
+        let after = &text[pos..];
+        if let Some(for_pos) = after.find(" for ") {
+            let name = after[for_pos + 5..].split_whitespace().next()?;
+            if !name.is_empty() {
+                return Some(name);
+            }
         }
     }
     None
@@ -476,6 +534,37 @@ mod tests {
         assert_eq!(intent.tool_args["lines"], 200);
     }
 
+    // ── Journal commands ──────────────────────────────────────
+
+    #[test]
+    fn parse_journal_for_service() {
+        let intent = parse("show journal for nginx.service").unwrap();
+        assert_eq!(intent.tool_name, "query_journal");
+        assert_eq!(intent.tool_args["unit"], "nginx.service");
+    }
+
+    #[test]
+    fn parse_journalctl_service() {
+        let intent = parse("journalctl sshd").unwrap();
+        assert_eq!(intent.tool_name, "query_journal");
+        assert_eq!(intent.tool_args["unit"], "sshd");
+    }
+
+    #[test]
+    fn parse_service_logs_for() {
+        let intent = parse("service logs for docker.service").unwrap();
+        assert_eq!(intent.tool_name, "query_journal");
+        assert_eq!(intent.tool_args["unit"], "docker.service");
+    }
+
+    #[test]
+    fn parse_systemd_logs_fallback() {
+        let intent = parse("show systemd logs").unwrap();
+        assert_eq!(intent.tool_name, "query_journal");
+        // No explicit service → falls back to systemd-journald.service
+        assert_eq!(intent.tool_args["unit"], "systemd-journald.service");
+    }
+
     // ── Unrecognized ────────────────────────────────────────────
 
     #[test]
@@ -513,5 +602,31 @@ mod tests {
             extract_search_query("search logs for connection refused"),
             Some("connection refused")
         );
+    }
+
+    #[test]
+    fn extract_service_journal_for() {
+        assert_eq!(
+            extract_service_name("show journal for nginx.service"),
+            Some("nginx.service")
+        );
+    }
+
+    #[test]
+    fn extract_service_journalctl() {
+        assert_eq!(extract_service_name("journalctl sshd"), Some("sshd"));
+    }
+
+    #[test]
+    fn extract_service_logs_for() {
+        assert_eq!(
+            extract_service_name("service logs for docker.service"),
+            Some("docker.service")
+        );
+    }
+
+    #[test]
+    fn extract_service_none() {
+        assert_eq!(extract_service_name("show systemd logs"), None);
     }
 }

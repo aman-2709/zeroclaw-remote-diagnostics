@@ -119,18 +119,25 @@ impl<'a> CommandExecutor<'a> {
         let latency_ms = start.elapsed().as_millis() as u64;
 
         match result {
-            Ok(data) => CommandResponse {
-                command_id: envelope.id,
-                correlation_id: envelope.correlation_id,
-                device_id: envelope.device_id.clone(),
-                status: CommandStatus::Completed,
-                inference_tier: tier,
-                response_text: Some(format!("Tool '{tool_name}' executed successfully")),
-                response_data: Some(data),
-                latency_ms,
-                responded_at: Utc::now(),
-                error: None,
-            },
+            Ok(data) => {
+                // Prefer the tool's summary (e.g. "Found 5 matches …") over a generic message
+                let summary = data["summary"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("Tool '{tool_name}' executed successfully"));
+                CommandResponse {
+                    command_id: envelope.id,
+                    correlation_id: envelope.correlation_id,
+                    device_id: envelope.device_id.clone(),
+                    status: CommandStatus::Completed,
+                    inference_tier: tier,
+                    response_text: Some(summary),
+                    response_data: Some(data),
+                    latency_ms,
+                    responded_at: Utc::now(),
+                    error: None,
+                }
+            }
             Err(err) => CommandResponse {
                 command_id: envelope.id,
                 correlation_id: envelope.correlation_id,

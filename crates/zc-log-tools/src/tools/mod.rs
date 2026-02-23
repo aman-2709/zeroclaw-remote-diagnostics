@@ -1,14 +1,16 @@
 //! Log analysis tool implementations.
 //!
-//! 4 tools: search_logs, analyze_errors, log_stats, tail_logs.
+//! 5 tools: search_logs, analyze_errors, log_stats, tail_logs, query_journal.
 
 pub mod analyze_errors;
 pub mod log_stats;
+pub mod query_journal;
 pub mod search_logs;
 pub mod tail_logs;
 
 pub use analyze_errors::AnalyzeErrors;
 pub use log_stats::LogStats;
+pub use query_journal::QueryJournal;
 pub use search_logs::SearchLogs;
 pub use tail_logs::TailLogs;
 
@@ -21,6 +23,7 @@ pub fn all_tools() -> Vec<Box<dyn LogTool>> {
         Box::new(AnalyzeErrors),
         Box::new(LogStats),
         Box::new(TailLogs),
+        Box::new(QueryJournal),
     ]
 }
 
@@ -62,7 +65,7 @@ mod tests {
 
     #[test]
     fn all_tools_count() {
-        assert_eq!(all_tools().len(), 4);
+        assert_eq!(all_tools().len(), 5);
     }
 
     #[test]
