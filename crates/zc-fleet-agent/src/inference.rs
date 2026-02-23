@@ -30,14 +30,21 @@ Response format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}
 ## Action 2: shell — Run a system command
 Use this for system info queries like CPU temperature, disk space, memory, network status, uptime, etc. Only read-only commands are safe — the device enforces an allowlist.
 
-Response format: {"action": "shell", "command": "<shell command>", "confidence": <0.0-1.0>}
+IMPORTANT: Use simple single commands only. Do NOT use pipes (|), semicolons (;), redirects (> <), backticks, $(), or && — these are blocked. Use command flags instead.
+
+Response format: {"action": "shell", "command": "<single command with flags>", "confidence": <0.0-1.0>}
 
 Examples:
-- "what's the CPU temperature?" → {"action": "shell", "command": "sensors", "confidence": 0.9}
+- "what's the CPU temperature?" → {"action": "shell", "command": "cat /sys/class/thermal/thermal_zone0/temp", "confidence": 0.9}
 - "how much disk space is left?" → {"action": "shell", "command": "df -h", "confidence": 0.95}
 - "show memory usage" → {"action": "shell", "command": "free -h", "confidence": 0.95}
 - "what processes are running?" → {"action": "shell", "command": "ps aux", "confidence": 0.9}
 - "show network interfaces" → {"action": "shell", "command": "ip addr", "confidence": 0.9}
+- "system uptime?" → {"action": "shell", "command": "uptime", "confidence": 0.95}
+- "kernel version?" → {"action": "shell", "command": "uname -a", "confidence": 0.95}
+- "list files in /tmp" → {"action": "shell", "command": "ls -la /tmp", "confidence": 0.9}
+- "show system logs" → {"action": "shell", "command": "journalctl -n 50 --no-pager", "confidence": 0.9}
+- "CPU info?" → {"action": "shell", "command": "lscpu", "confidence": 0.95}
 
 ## Action 3: reply — Conversational response
 Use this for greetings, questions about yourself, or anything that doesn't need a tool or shell command.
@@ -70,8 +77,57 @@ const KNOWN_TOOLS: &[&str] = &[
     "tail_logs",
 ];
 
+/// Log tools that require a "path" argument.
+const LOG_TOOLS: &[&str] = &["search_logs", "analyze_errors", "log_stats", "tail_logs"];
+
+/// Default log path when LLM omits it.
+const DEFAULT_LOG_PATH: &str = "/var/log/syslog";
+
+/// Shell metacharacters to strip from LLM-generated commands.
+const SHELL_METACHAR_PREFIXES: &[char] = &['|', ';', '`', '>', '<', '&', '\n', '\r'];
+
 /// Minimum confidence threshold — below this we treat as "no match".
 const MIN_CONFIDENCE: f64 = 0.3;
+
+/// Strip everything from the first shell metacharacter onward.
+/// LLMs (especially small ones like phi3) often add pipes despite instructions.
+/// Since we use `tokio::process::Command` (no shell), pipes don't work anyway.
+fn sanitize_shell_command(cmd: &str) -> String {
+    let cmd = cmd.trim();
+    // Find the earliest metacharacter position
+    let cut = cmd
+        .find("$(")
+        .into_iter()
+        .chain(
+            SHELL_METACHAR_PREFIXES
+                .iter()
+                .filter_map(|&c| cmd.find(c)),
+        )
+        .min();
+    match cut {
+        Some(pos) if pos > 0 => cmd[..pos].trim().to_string(),
+        Some(_) => String::new(), // metachar at start — nothing useful
+        None => cmd.to_string(),
+    }
+}
+
+/// Inject default `path` for log tools if the LLM omitted it.
+fn ensure_log_tool_path(tool_name: &str, mut args: serde_json::Value) -> serde_json::Value {
+    if LOG_TOOLS.contains(&tool_name) {
+        if let Some(obj) = args.as_object_mut() {
+            if !obj.contains_key("path") {
+                obj.insert(
+                    "path".to_string(),
+                    serde_json::Value::String(DEFAULT_LOG_PATH.to_string()),
+                );
+            }
+        } else {
+            // args wasn't an object — replace with default
+            args = serde_json::json!({ "path": DEFAULT_LOG_PATH });
+        }
+    }
+    args
+}
 
 /// Configuration for the local Ollama inference endpoint.
 #[derive(Debug, Clone, Deserialize)]
@@ -246,8 +302,16 @@ impl OllamaClient {
             "reply" => self.validate_reply_intent(raw),
             other => {
                 tracing::warn!(action = %other, "ollama returned unknown action type");
-                // Graceful fallback: if there's a tool_name, try tool path
-                if raw.tool_name.is_some() {
+                // Graceful fallback 1: action is itself a known tool name
+                // (phi3 sometimes puts tool_name in the action field)
+                if KNOWN_TOOLS.contains(&other) {
+                    self.validate_tool_intent(RawIntent {
+                        action: "tool".into(),
+                        tool_name: Some(other.to_string()),
+                        ..raw
+                    })
+                // Graceful fallback 2: separate tool_name field exists
+                } else if raw.tool_name.is_some() {
                     self.validate_tool_intent(RawIntent {
                         action: "tool".into(),
                         ..raw
@@ -260,6 +324,7 @@ impl OllamaClient {
     }
 
     /// Validate a tool action: tool_name must be known, confidence above threshold.
+    /// Injects default `path` for log tools when missing (phi3 sometimes omits it).
     fn validate_tool_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
         let tool_name = raw.tool_name?;
         if !KNOWN_TOOLS.contains(&tool_name.as_str()) {
@@ -276,17 +341,29 @@ impl OllamaClient {
             return None;
         }
 
+        // Log tools require a "path" argument — inject default if missing
+        let tool_args = ensure_log_tool_path(&tool_name, raw.tool_args);
+
         Some(ParsedIntent {
             action: ActionKind::Tool,
             tool_name,
-            tool_args: raw.tool_args,
+            tool_args,
             confidence: raw.confidence,
         })
     }
 
     /// Validate a shell action: command field must be present and non-empty.
+    /// Sanitizes commands by stripping anything from the first shell metacharacter
+    /// onward, since phi3 sometimes generates piped commands despite instructions.
     fn validate_shell_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
         let command = raw.command.filter(|c| !c.trim().is_empty())?;
+
+        // Strip from first metacharacter — LLMs sometimes add pipes/redirects
+        // even when told not to. We only run the base command.
+        let sanitized = sanitize_shell_command(&command);
+        if sanitized.is_empty() {
+            return None;
+        }
 
         if raw.confidence < MIN_CONFIDENCE {
             tracing::debug!(
@@ -296,9 +373,17 @@ impl OllamaClient {
             return None;
         }
 
+        if sanitized != command {
+            tracing::info!(
+                original = %command,
+                sanitized = %sanitized,
+                "shell command sanitized (metacharacters stripped)"
+            );
+        }
+
         Some(ParsedIntent {
             action: ActionKind::Shell,
-            tool_name: command,
+            tool_name: sanitized,
             tool_args: raw.tool_args,
             confidence: raw.confidence,
         })
@@ -524,6 +609,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parse_action_is_tool_name_falls_back() {
+        // phi3 sometimes puts the tool name in the action field
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "tail_logs", "tool_args": {"path": "/var/log/syslog", "lines": 50}, "confidence": 0.9}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client.parse("show system logs").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Tool);
+        assert_eq!(intent.tool_name, "tail_logs");
+    }
+
+    #[tokio::test]
     async fn parse_unknown_action_no_tool_returns_none() {
         let server = MockServer::start().await;
         let body = ollama_response(r#"{"action": "dance", "confidence": 0.5}"#);
@@ -580,6 +684,63 @@ mod tests {
 
         let client = client_for(&server);
         assert!(client.parse("read DTCs").await.is_none());
+    }
+
+    // ── Helper function tests ─────────────────────────────────────
+
+    #[test]
+    fn sanitize_strips_pipe() {
+        assert_eq!(
+            sanitize_shell_command("cat /sys/class/thermal/thermal_zone0/temp | awk '{print}'"),
+            "cat /sys/class/thermal/thermal_zone0/temp"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_semicolon() {
+        assert_eq!(
+            sanitize_shell_command("ls /tmp; rm -rf /"),
+            "ls /tmp"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_redirect() {
+        assert_eq!(
+            sanitize_shell_command("echo hi > /etc/passwd"),
+            "echo hi"
+        );
+    }
+
+    #[test]
+    fn sanitize_clean_command_unchanged() {
+        assert_eq!(sanitize_shell_command("df -h"), "df -h");
+    }
+
+    #[test]
+    fn sanitize_leading_metachar_returns_empty() {
+        assert_eq!(sanitize_shell_command("|cat"), "");
+    }
+
+    #[test]
+    fn ensure_path_injects_default_for_log_tool() {
+        let args = serde_json::json!({});
+        let result = ensure_log_tool_path("tail_logs", args);
+        assert_eq!(result["path"], "/var/log/syslog");
+    }
+
+    #[test]
+    fn ensure_path_preserves_existing() {
+        let args = serde_json::json!({"path": "/var/log/app.log"});
+        let result = ensure_log_tool_path("tail_logs", args);
+        assert_eq!(result["path"], "/var/log/app.log");
+    }
+
+    #[test]
+    fn ensure_path_skips_non_log_tool() {
+        let args = serde_json::json!({});
+        let result = ensure_log_tool_path("read_dtcs", args);
+        assert!(result.get("path").is_none());
     }
 
     // ── Config tests ─────────────────────────────────────────────
