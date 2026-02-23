@@ -2,6 +2,7 @@
 //!
 //! Handles the ~20% of queries that the rule-based engine can't match.
 //! Uses the model-agnostic Converse API (works with Nova Lite, Claude, etc.).
+//! Supports three action types: tool, shell, reply.
 
 use async_trait::async_trait;
 use aws_sdk_bedrockruntime::Client as BedrockClient;
@@ -11,50 +12,45 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use super::{InferenceEngine, ParseResult};
-use zc_protocol::commands::ParsedIntent;
+use zc_protocol::commands::{ActionKind, ParsedIntent};
 
-/// System prompt listing all 9 available tools and expected JSON output format.
+/// System prompt listing all 9 tools plus shell and reply action types.
 ///
 /// Embedded as a const to avoid pulling zc-canbus-tools/zc-log-tools as dependencies
 /// (which would bring in socketcan, regex, etc. into the cloud API binary).
-const SYSTEM_PROMPT: &str = r#"You are a command parser for an IoT fleet management platform. Your job is to parse natural-language operator commands into structured tool invocations.
+const SYSTEM_PROMPT: &str = r#"You are an AI agent for an IoT fleet management platform. Parse operator commands into one of three actions.
 
+## Action 1: tool — Invoke a diagnostic tool
 Available tools:
 
-1. read_dtcs — Read diagnostic trouble codes (DTCs) from the vehicle ECU.
-   Parameters: {} (none)
+1. read_dtcs — Read diagnostic trouble codes from the vehicle ECU. Args: {}
+2. read_vin — Read the Vehicle Identification Number. Args: {}
+3. read_freeze — Read freeze frame data. Args: {}
+4. read_pid — Read an OBD-II sensor value. Args: {"pid": "0x0C"} (0x0C=RPM, 0x0D=speed, 0x05=coolant temp, 0x11=throttle, 0x2F=fuel level, 0x04=engine load, 0x0F=intake temp, 0x0E=timing advance)
+5. can_monitor — Monitor raw CAN bus traffic. Args: {"duration_secs": 10}
+6. search_logs — Search device logs. Args: {"path": "/var/log/syslog", "query": "error"}
+7. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
+8. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
+9. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
 
-2. read_vin — Read the Vehicle Identification Number.
-   Parameters: {} (none)
+Format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
 
-3. read_freeze — Read freeze frame data captured when a DTC was set.
-   Parameters: {} (none)
+## Action 2: shell — Run a system command on the device
+For system info queries (CPU temp, disk space, memory, network, uptime, etc.).
 
-4. read_pid — Read a specific OBD-II Parameter ID (sensor value).
-   Parameters: {"pid": "0x0C"} (hex string, e.g. 0x0C=RPM, 0x0D=speed, 0x05=coolant temp, 0x11=throttle, 0x2F=fuel level, 0x04=engine load, 0x0F=intake temp, 0x0E=timing advance)
+Format: {"action": "shell", "command": "<shell command>", "confidence": <0.0-1.0>}
 
-5. can_monitor — Monitor raw CAN bus traffic for a duration.
-   Parameters: {"duration_secs": 10} (integer, seconds)
+## Action 3: reply — Conversational response
+For greetings, questions about capabilities, or non-actionable queries.
 
-6. search_logs — Search device logs for a pattern.
-   Parameters: {"path": "/var/log/syslog", "query": "error"} (path string, query string)
+Format: {"action": "reply", "message": "<your response>", "confidence": 1.0}
 
-7. analyze_errors — Analyze error patterns in device logs.
-   Parameters: {"path": "/var/log/syslog"} (path string)
-
-8. log_stats — Get log statistics (counts by severity, time ranges).
-   Parameters: {"path": "/var/log/syslog"} (path string)
-
-9. tail_logs — Show recent log entries.
-   Parameters: {"path": "/var/log/syslog", "lines": 50} (path string, integer)
-
-Respond with ONLY a JSON object (no markdown, no explanation):
-{"tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
-
-If the command doesn't match any tool, respond with:
-{"tool_name": null, "tool_args": {}, "confidence": 0.0}
-
-Be generous in interpretation — operators use casual language. Map their intent to the closest tool."#;
+## Rules
+- Respond with ONLY a JSON object (no markdown, no explanation)
+- Vehicle/diagnostic queries → tool
+- System/OS queries → shell
+- Conversation/greetings → reply
+- Be generous in interpretation — operators use casual language"#;
 
 /// Known tool names for validation.
 const KNOWN_TOOLS: &[&str] = &[
@@ -183,10 +179,26 @@ impl BedrockEngine {
 
         // Parse the JSON from the LLM output
         let json_str = extract_json(&raw_text);
-        let call: LlmToolCall = serde_json::from_str(json_str)
+        let call: LlmResponse = serde_json::from_str(json_str)
             .map_err(|e| anyhow::anyhow!("failed to parse bedrock JSON: {e} — raw: {raw_text}"))?;
 
-        // Validate tool name
+        // Route based on action type
+        match call.action.as_str() {
+            "tool" => self.validate_tool(call),
+            "shell" => self.validate_shell(call),
+            "reply" => self.validate_reply(call),
+            _ => {
+                // Fallback: if tool_name present, try tool path
+                if call.tool_name.is_some() {
+                    self.validate_tool(call)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    fn validate_tool(&self, call: LlmResponse) -> anyhow::Result<Option<ParsedIntent>> {
         let Some(tool_name) = call.tool_name else {
             return Ok(None);
         };
@@ -197,29 +209,65 @@ impl BedrockEngine {
         }
 
         if call.confidence < 0.3 {
-            tracing::debug!(
-                confidence = call.confidence,
-                "bedrock confidence too low, discarding"
-            );
+            tracing::debug!(confidence = call.confidence, "bedrock confidence too low");
             return Ok(None);
         }
 
         Ok(Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name,
             tool_args: call.tool_args,
             confidence: call.confidence,
         }))
     }
+
+    fn validate_shell(&self, call: LlmResponse) -> anyhow::Result<Option<ParsedIntent>> {
+        let Some(command) = call.command.filter(|c| !c.trim().is_empty()) else {
+            return Ok(None);
+        };
+
+        if call.confidence < 0.3 {
+            return Ok(None);
+        }
+
+        Ok(Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: command,
+            tool_args: call.tool_args,
+            confidence: call.confidence,
+        }))
+    }
+
+    fn validate_reply(&self, call: LlmResponse) -> anyhow::Result<Option<ParsedIntent>> {
+        let Some(message) = call.message.filter(|m| !m.trim().is_empty()) else {
+            return Ok(None);
+        };
+
+        Ok(Some(ParsedIntent {
+            action: ActionKind::Reply,
+            tool_name: String::new(),
+            tool_args: serde_json::json!({ "message": message }),
+            confidence: call.confidence.max(1.0),
+        }))
+    }
 }
 
-/// Expected JSON shape from the LLM.
+/// Expected JSON shape from the LLM — supports all three action types.
 #[derive(Debug, Deserialize)]
-struct LlmToolCall {
+struct LlmResponse {
+    #[serde(default = "default_action")]
+    action: String,
     tool_name: Option<String>,
     #[serde(default)]
     tool_args: serde_json::Value,
+    command: Option<String>,
+    message: Option<String>,
     #[serde(default)]
     confidence: f64,
+}
+
+fn default_action() -> String {
+    "tool".into()
 }
 
 /// Extract JSON from LLM output that may be wrapped in markdown code blocks.
@@ -297,29 +345,47 @@ mod tests {
         assert!(!is_known_tool("READ_DTCS")); // case-sensitive
     }
 
-    // ── LlmToolCall deserialization ──────────────────────────────
+    // ── LlmResponse deserialization ──────────────────────────────
 
     #[test]
-    fn deserialize_valid_tool_call() {
-        let json = r#"{"tool_name": "read_pid", "tool_args": {"pid": "0x0C"}, "confidence": 0.92}"#;
-        let call: LlmToolCall = serde_json::from_str(json).unwrap();
-        assert_eq!(call.tool_name.as_deref(), Some("read_pid"));
-        assert_eq!(call.tool_args["pid"], "0x0C");
-        assert!((call.confidence - 0.92).abs() < f64::EPSILON);
+    fn deserialize_tool_action() {
+        let json = r#"{"action": "tool", "tool_name": "read_pid", "tool_args": {"pid": "0x0C"}, "confidence": 0.92}"#;
+        let resp: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.action, "tool");
+        assert_eq!(resp.tool_name.as_deref(), Some("read_pid"));
+        assert_eq!(resp.tool_args["pid"], "0x0C");
+    }
+
+    #[test]
+    fn deserialize_shell_action() {
+        let json = r#"{"action": "shell", "command": "df -h", "confidence": 0.95}"#;
+        let resp: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.action, "shell");
+        assert_eq!(resp.command.as_deref(), Some("df -h"));
+    }
+
+    #[test]
+    fn deserialize_reply_action() {
+        let json = r#"{"action": "reply", "message": "Hello!", "confidence": 1.0}"#;
+        let resp: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.action, "reply");
+        assert_eq!(resp.message.as_deref(), Some("Hello!"));
     }
 
     #[test]
     fn deserialize_null_tool_name() {
         let json = r#"{"tool_name": null, "tool_args": {}, "confidence": 0.0}"#;
-        let call: LlmToolCall = serde_json::from_str(json).unwrap();
-        assert!(call.tool_name.is_none());
+        let resp: LlmResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.tool_name.is_none());
+        assert_eq!(resp.action, "tool"); // default
     }
 
     #[test]
     fn deserialize_missing_optional_fields() {
         let json = r#"{"tool_name": "read_vin"}"#;
-        let call: LlmToolCall = serde_json::from_str(json).unwrap();
-        assert_eq!(call.tool_name.as_deref(), Some("read_vin"));
-        assert_eq!(call.confidence, 0.0);
+        let resp: LlmResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.tool_name.as_deref(), Some("read_vin"));
+        assert_eq!(resp.confidence, 0.0);
+        assert_eq!(resp.action, "tool");
     }
 }

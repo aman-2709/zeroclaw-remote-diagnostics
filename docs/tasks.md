@@ -63,6 +63,23 @@ Found during full-loop UI testing. Not committed yet — fix and commit together
 - [x] CommandForm fleet_id fix already applied (reads `metadata.fleet` first)
 - [x] TypeScript HardwareType updated to match Rust serde representation (string | {custom: string})
 
+## Phase 8: Agent Mode — From Tool Router to AI Agent
+Transform the fleet agent from a rigid tool router into a true AI agent with three action types.
+
+- [x] Add ActionKind enum (Tool/Shell/Reply) to zc-protocol ParsedIntent (backward-compatible via #[serde(default)])
+- [x] Create shell.rs module — safe shell executor with allowlist, injection blocking, path blocking, 5s timeout, 64KB cap
+- [x] Add shell-words + thiserror crate deps to zc-fleet-agent
+- [x] Rewrite Ollama system prompt for three action types (tool/shell/reply)
+- [x] Update RawIntent to parse action, command, message fields
+- [x] Update CommandExecutor with action routing: Tool → ToolRegistry, Shell → shell::execute(), Reply → return message
+- [x] Set explicit ActionKind::Tool in cloud-side rules.rs (all ParsedIntent constructions)
+- [x] Update bedrock.rs system prompt + LlmResponse for three action types
+- [x] Update tiered.rs test MockEngine with ActionKind::Tool
+- [x] Fix E2E tests (error_paths.rs, inference_paths.rs) — add ActionKind::Tool to ParsedIntent constructions
+- [x] Frontend: add ActionKind type, update ParsedIntent interface
+- [x] Frontend: update CommandForm — action label/color, monospace pre for shell output, neutral "sent to device" message
+- [x] 367 Rust tests passing (up from 324), clippy clean, fmt clean, svelte-check clean
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)

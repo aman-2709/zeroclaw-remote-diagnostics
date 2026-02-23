@@ -1,52 +1,61 @@
 //! Ollama local inference client for on-device NL command parsing.
 //!
 //! Calls the local Ollama HTTP API (`/api/chat`) to parse natural-language
-//! operator commands into structured tool invocations. This handles ~80%
-//! of queries at zero API cost; commands that don't match fall through to
-//! cloud inference or fail with a descriptive error.
+//! operator commands into structured intents. Supports three action types:
+//! - **tool**: Invoke one of 9 registered diagnostic tools
+//! - **shell**: Execute a safe system command on the device
+//! - **reply**: Return a conversational response (no execution)
 
 use serde::{Deserialize, Serialize};
-use zc_protocol::commands::ParsedIntent;
+use zc_protocol::commands::{ActionKind, ParsedIntent};
 
-/// System prompt shared with the cloud Bedrock engine — same 9-tool schema.
-const SYSTEM_PROMPT: &str = r#"You are a command parser for an IoT fleet management platform. Your job is to parse natural-language operator commands into structured tool invocations.
+/// System prompt teaching three action types: tool, shell, reply.
+const SYSTEM_PROMPT: &str = r#"You are an AI agent running on an IoT edge device in a vehicle fleet. You can do three things:
 
-Available tools:
+## Action 1: tool — Invoke a diagnostic tool
+Use this for vehicle diagnostics and log analysis. Available tools:
 
-1. read_dtcs — Read diagnostic trouble codes (DTCs) from the vehicle ECU.
-   Parameters: {} (none)
+1. read_dtcs — Read diagnostic trouble codes from the vehicle ECU. Args: {}
+2. read_vin — Read the Vehicle Identification Number. Args: {}
+3. read_freeze — Read freeze frame data. Args: {}
+4. read_pid — Read an OBD-II sensor value. Args: {"pid": "0x0C"} (0x0C=RPM, 0x0D=speed, 0x05=coolant temp, 0x11=throttle, 0x2F=fuel level, 0x04=engine load, 0x0F=intake temp, 0x0E=timing advance)
+5. can_monitor — Monitor raw CAN bus traffic. Args: {"duration_secs": 10}
+6. search_logs — Search device logs. Args: {"path": "/var/log/syslog", "query": "error"}
+7. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
+8. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
+9. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
 
-2. read_vin — Read the Vehicle Identification Number.
-   Parameters: {} (none)
+Response format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
 
-3. read_freeze — Read freeze frame data captured when a DTC was set.
-   Parameters: {} (none)
+## Action 2: shell — Run a system command
+Use this for system info queries like CPU temperature, disk space, memory, network status, uptime, etc. Only read-only commands are safe — the device enforces an allowlist.
 
-4. read_pid — Read a specific OBD-II Parameter ID (sensor value).
-   Parameters: {"pid": "0x0C"} (hex string, e.g. 0x0C=RPM, 0x0D=speed, 0x05=coolant temp, 0x11=throttle, 0x2F=fuel level, 0x04=engine load, 0x0F=intake temp, 0x0E=timing advance)
+Response format: {"action": "shell", "command": "<shell command>", "confidence": <0.0-1.0>}
 
-5. can_monitor — Monitor raw CAN bus traffic for a duration.
-   Parameters: {"duration_secs": 10} (integer, seconds)
+Examples:
+- "what's the CPU temperature?" → {"action": "shell", "command": "sensors", "confidence": 0.9}
+- "how much disk space is left?" → {"action": "shell", "command": "df -h", "confidence": 0.95}
+- "show memory usage" → {"action": "shell", "command": "free -h", "confidence": 0.95}
+- "what processes are running?" → {"action": "shell", "command": "ps aux", "confidence": 0.9}
+- "show network interfaces" → {"action": "shell", "command": "ip addr", "confidence": 0.9}
 
-6. search_logs — Search device logs for a pattern.
-   Parameters: {"path": "/var/log/syslog", "query": "error"} (path string, query string)
+## Action 3: reply — Conversational response
+Use this for greetings, questions about yourself, or anything that doesn't need a tool or shell command.
 
-7. analyze_errors — Analyze error patterns in device logs.
-   Parameters: {"path": "/var/log/syslog"} (path string)
+Response format: {"action": "reply", "message": "<your response>", "confidence": 1.0}
 
-8. log_stats — Get log statistics (counts by severity, time ranges).
-   Parameters: {"path": "/var/log/syslog"} (path string)
+Examples:
+- "how are you?" → {"action": "reply", "message": "I'm operational and monitoring the fleet. All systems nominal.", "confidence": 1.0}
+- "hello" → {"action": "reply", "message": "Hello! I'm the fleet agent for this device. How can I help?", "confidence": 1.0}
+- "what can you do?" → {"action": "reply", "message": "I can read vehicle diagnostics (DTCs, PIDs, VIN), analyze logs, run system commands, and monitor CAN bus traffic.", "confidence": 1.0}
 
-9. tail_logs — Show recent log entries.
-   Parameters: {"path": "/var/log/syslog", "lines": 50} (path string, integer)
-
-Respond with ONLY a JSON object (no markdown, no explanation):
-{"tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
-
-If the command doesn't match any tool, respond with:
-{"tool_name": null, "tool_args": {}, "confidence": 0.0}
-
-Be generous in interpretation — operators use casual language. Map their intent to the closest tool."#;
+## Rules
+- Respond with ONLY a JSON object (no markdown, no explanation)
+- Be generous in interpretation — operators use casual language
+- For vehicle/diagnostic queries → action: tool
+- For system/OS queries → action: shell
+- For conversation/greetings → action: reply
+- When unsure, prefer "reply" with a helpful message over returning nothing"#;
 
 /// Known tool names for validation. Must match the tools in SYSTEM_PROMPT.
 const KNOWN_TOOLS: &[&str] = &[
@@ -132,14 +141,28 @@ struct ResponseMessage {
     content: String,
 }
 
-/// Raw LLM output before validation.
+/// Raw LLM output before validation — supports all three action types.
 #[derive(Deserialize)]
 struct RawIntent {
+    /// Action type: "tool", "shell", or "reply". Defaults to "tool" for backward compat.
+    #[serde(default = "default_action")]
+    action: String,
+    /// Tool name (for action=tool) — may be null.
     tool_name: Option<String>,
+    /// Tool arguments (for action=tool).
     #[serde(default)]
     tool_args: serde_json::Value,
+    /// Shell command string (for action=shell).
+    command: Option<String>,
+    /// Conversational reply (for action=reply).
+    message: Option<String>,
+    /// Confidence score.
     #[serde(default)]
     confidence: f64,
+}
+
+fn default_action() -> String {
+    "tool".into()
 }
 
 /// Client for the local Ollama inference endpoint.
@@ -159,8 +182,13 @@ impl OllamaClient {
 
     /// Parse a natural-language command into a `ParsedIntent`.
     ///
-    /// Returns `None` if Ollama is unreachable, returns garbage, the tool name
-    /// is unknown, or confidence is below threshold.
+    /// Supports three action types:
+    /// - `tool`: validates tool_name against KNOWN_TOOLS
+    /// - `shell`: validates command field exists
+    /// - `reply`: validates message field exists
+    ///
+    /// Returns `None` if Ollama is unreachable, returns garbage, or
+    /// confidence is below threshold.
     pub async fn parse(&self, text: &str) -> Option<ParsedIntent> {
         let url = format!("{}/api/chat", self.config.host);
 
@@ -211,14 +239,34 @@ impl OllamaClient {
             }
         };
 
-        // Validate tool_name is present and known
+        // Route based on action type
+        match raw.action.as_str() {
+            "tool" => self.validate_tool_intent(raw),
+            "shell" => self.validate_shell_intent(raw),
+            "reply" => self.validate_reply_intent(raw),
+            other => {
+                tracing::warn!(action = %other, "ollama returned unknown action type");
+                // Graceful fallback: if there's a tool_name, try tool path
+                if raw.tool_name.is_some() {
+                    self.validate_tool_intent(RawIntent {
+                        action: "tool".into(),
+                        ..raw
+                    })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Validate a tool action: tool_name must be known, confidence above threshold.
+    fn validate_tool_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
         let tool_name = raw.tool_name?;
         if !KNOWN_TOOLS.contains(&tool_name.as_str()) {
             tracing::warn!(tool_name = %tool_name, "ollama returned unknown tool");
             return None;
         }
 
-        // Validate confidence threshold
         if raw.confidence < MIN_CONFIDENCE {
             tracing::debug!(
                 confidence = raw.confidence,
@@ -229,9 +277,42 @@ impl OllamaClient {
         }
 
         Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name,
             tool_args: raw.tool_args,
             confidence: raw.confidence,
+        })
+    }
+
+    /// Validate a shell action: command field must be present and non-empty.
+    fn validate_shell_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
+        let command = raw.command.filter(|c| !c.trim().is_empty())?;
+
+        if raw.confidence < MIN_CONFIDENCE {
+            tracing::debug!(
+                confidence = raw.confidence,
+                "shell intent confidence too low"
+            );
+            return None;
+        }
+
+        Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: command,
+            tool_args: raw.tool_args,
+            confidence: raw.confidence,
+        })
+    }
+
+    /// Validate a reply action: message field must be present and non-empty.
+    fn validate_reply_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
+        let message = raw.message.filter(|m| !m.trim().is_empty())?;
+
+        Some(ParsedIntent {
+            action: ActionKind::Reply,
+            tool_name: String::new(),
+            tool_args: serde_json::json!({ "message": message }),
+            confidence: raw.confidence.max(1.0),
         })
     }
 }
@@ -264,8 +345,33 @@ mod tests {
         })
     }
 
+    // ── Tool action tests (existing, updated) ────────────────────
+
     #[tokio::test]
-    async fn parse_read_dtcs() {
+    async fn parse_tool_read_dtcs() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "tool", "tool_name": "read_dtcs", "tool_args": {}, "confidence": 0.95}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client
+            .parse("read the diagnostic trouble codes")
+            .await
+            .unwrap();
+        assert_eq!(intent.action, ActionKind::Tool);
+        assert_eq!(intent.tool_name, "read_dtcs");
+        assert!((intent.confidence - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn parse_tool_backward_compat_no_action() {
+        // Old-format JSON without "action" field should default to tool
         let server = MockServer::start().await;
         let body =
             ollama_response(r#"{"tool_name": "read_dtcs", "tool_args": {}, "confidence": 0.95}"#);
@@ -276,16 +382,165 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let result = client.parse("read the diagnostic trouble codes").await;
-
-        let intent = result.expect("should parse successfully");
+        let intent = client.parse("read DTCs").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Tool);
         assert_eq!(intent.tool_name, "read_dtcs");
-        assert_eq!(intent.tool_args, serde_json::json!({}));
-        assert!((intent.confidence - 0.95).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
-    async fn parse_unknown_command() {
+    async fn parse_unknown_tool_returns_none() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "tool", "tool_name": "self_destruct", "tool_args": {}, "confidence": 0.99}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        assert!(client.parse("destroy everything").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn parse_low_confidence_tool() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "tool", "tool_name": "read_pid", "tool_args": {"pid": "0x0C"}, "confidence": 0.1}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        assert!(client.parse("maybe something").await.is_none());
+    }
+
+    // ── Shell action tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn parse_shell_command() {
+        let server = MockServer::start().await;
+        let body =
+            ollama_response(r#"{"action": "shell", "command": "sensors", "confidence": 0.9}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client.parse("what's the CPU temperature?").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "sensors");
+    }
+
+    #[tokio::test]
+    async fn parse_shell_df() {
+        let server = MockServer::start().await;
+        let body =
+            ollama_response(r#"{"action": "shell", "command": "df -h", "confidence": 0.95}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client.parse("how much disk space?").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "df -h");
+    }
+
+    #[tokio::test]
+    async fn parse_shell_empty_command_returns_none() {
+        let server = MockServer::start().await;
+        let body = ollama_response(r#"{"action": "shell", "command": "", "confidence": 0.9}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        assert!(client.parse("do something").await.is_none());
+    }
+
+    // ── Reply action tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn parse_reply() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "reply", "message": "Hello! I'm the fleet agent.", "confidence": 1.0}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client.parse("hello").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Reply);
+        assert_eq!(intent.tool_args["message"], "Hello! I'm the fleet agent.");
+    }
+
+    #[tokio::test]
+    async fn parse_reply_empty_message_returns_none() {
+        let server = MockServer::start().await;
+        let body = ollama_response(r#"{"action": "reply", "message": "", "confidence": 1.0}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        assert!(client.parse("...").await.is_none());
+    }
+
+    // ── Unknown action fallback ──────────────────────────────────
+
+    #[tokio::test]
+    async fn parse_unknown_action_with_tool_name_falls_back() {
+        let server = MockServer::start().await;
+        let body = ollama_response(
+            r#"{"action": "magic", "tool_name": "read_vin", "tool_args": {}, "confidence": 0.8}"#,
+        );
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let intent = client.parse("read vin").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Tool);
+        assert_eq!(intent.tool_name, "read_vin");
+    }
+
+    #[tokio::test]
+    async fn parse_unknown_action_no_tool_returns_none() {
+        let server = MockServer::start().await;
+        let body = ollama_response(r#"{"action": "dance", "confidence": 0.5}"#);
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        assert!(client.parse("do a dance").await.is_none());
+    }
+
+    // ── Null tool_name (old format) now treated as no-match ──────
+
+    #[tokio::test]
+    async fn parse_null_tool_name_returns_none() {
         let server = MockServer::start().await;
         let body = ollama_response(r#"{"tool_name": null, "tool_args": {}, "confidence": 0.0}"#);
         Mock::given(method("POST"))
@@ -295,43 +550,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let result = client.parse("bake me a pizza").await;
-        assert!(result.is_none());
+        assert!(client.parse("bake a pizza").await.is_none());
     }
 
-    #[tokio::test]
-    async fn parse_low_confidence() {
-        let server = MockServer::start().await;
-        let body = ollama_response(
-            r#"{"tool_name": "read_pid", "tool_args": {"pid": "0x0C"}, "confidence": 0.1}"#,
-        );
-        Mock::given(method("POST"))
-            .and(path("/api/chat"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&server)
-            .await;
-
-        let client = client_for(&server);
-        let result = client.parse("maybe check something").await;
-        assert!(result.is_none(), "confidence below 0.3 should be rejected");
-    }
-
-    #[tokio::test]
-    async fn parse_unknown_tool() {
-        let server = MockServer::start().await;
-        let body = ollama_response(
-            r#"{"tool_name": "self_destruct", "tool_args": {}, "confidence": 0.99}"#,
-        );
-        Mock::given(method("POST"))
-            .and(path("/api/chat"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&server)
-            .await;
-
-        let client = client_for(&server);
-        let result = client.parse("destroy everything").await;
-        assert!(result.is_none(), "unknown tool names should be rejected");
-    }
+    // ── Error handling ───────────────────────────────────────────
 
     #[tokio::test]
     async fn parse_timeout() {
@@ -342,10 +564,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Client timeout is 2s, mock delays 10s → timeout
         let client = client_for(&server);
-        let result = client.parse("read DTCs").await;
-        assert!(result.is_none(), "timeout should return None");
+        assert!(client.parse("read DTCs").await.is_none());
     }
 
     #[tokio::test]
@@ -359,9 +579,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let result = client.parse("read DTCs").await;
-        assert!(result.is_none(), "invalid JSON should return None");
+        assert!(client.parse("read DTCs").await.is_none());
     }
+
+    // ── Config tests ─────────────────────────────────────────────
 
     #[tokio::test]
     async fn config_defaults() {

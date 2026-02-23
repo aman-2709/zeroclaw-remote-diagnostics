@@ -42,7 +42,7 @@ impl InferenceEngine for TieredEngine {
 mod tests {
     use super::*;
     use serde_json::json;
-    use zc_protocol::commands::ParsedIntent;
+    use zc_protocol::commands::{ActionKind, ParsedIntent};
 
     /// Mock engine that always returns a fixed result (or None).
     struct MockEngine {
@@ -55,6 +55,7 @@ mod tests {
             Self {
                 result: Some(ParseResult {
                     intent: ParsedIntent {
+                        action: ActionKind::Tool,
                         tool_name: tool.into(),
                         tool_args: json!({}),
                         confidence: 0.95,

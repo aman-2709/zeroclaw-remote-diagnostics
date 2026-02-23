@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::{InferenceEngine, ParseResult};
-use zc_protocol::commands::ParsedIntent;
+use zc_protocol::commands::{ActionKind, ParsedIntent};
 
 /// Pattern-matching inference engine for structured commands.
 pub struct RuleBasedEngine;
@@ -58,6 +58,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         ],
     ) {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "read_dtcs".into(),
             tool_args: json!({}),
             confidence: 0.95,
@@ -76,6 +77,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         ],
     ) {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "read_vin".into(),
             tool_args: json!({}),
             confidence: 0.95,
@@ -93,6 +95,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         ],
     ) {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "read_freeze".into(),
             tool_args: json!({}),
             confidence: 0.90,
@@ -118,6 +121,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     ) {
         let duration = extract_duration(lower).unwrap_or(10);
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "can_monitor".into(),
             tool_args: json!({ "duration_secs": duration }),
             confidence: 0.90,
@@ -133,6 +137,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     ) {
         let query = extract_search_query(lower);
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "search_logs".into(),
             tool_args: json!({
                 "path": "/var/log/syslog",
@@ -154,6 +159,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         ],
     ) {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "analyze_errors".into(),
             tool_args: json!({ "path": "/var/log/syslog" }),
             confidence: 0.90,
@@ -166,6 +172,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         &["log stat", "log summar", "log overview", "show stat"],
     ) {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "log_stats".into(),
             tool_args: json!({ "path": "/var/log/syslog" }),
             confidence: 0.90,
@@ -185,6 +192,7 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     ) {
         let lines = extract_line_count(lower).unwrap_or(50);
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "tail_logs".into(),
             tool_args: json!({
                 "path": "/var/log/syslog",
@@ -221,6 +229,7 @@ fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
             && matches_any(text, &["read", "get", "show", "what", "check"])
         {
             return Some(ParsedIntent {
+                action: ActionKind::Tool,
                 tool_name: "read_pid".into(),
                 tool_args: json!({ "pid": pid }),
                 confidence: 0.92,
@@ -233,6 +242,7 @@ fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
         && let Some(pid) = extract_hex_value(text)
     {
         return Some(ParsedIntent {
+            action: ActionKind::Tool,
             tool_name: "read_pid".into(),
             tool_args: json!({ "pid": pid }),
             confidence: 0.95,

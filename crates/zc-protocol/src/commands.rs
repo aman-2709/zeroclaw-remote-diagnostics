@@ -31,12 +31,31 @@ fn default_timeout_secs() -> u32 {
     30
 }
 
+/// What kind of action the parsed intent represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionKind {
+    /// Invoke one of the 9 registered tools (CAN bus + log).
+    #[default]
+    Tool,
+    /// Execute a safe shell command on the device.
+    Shell,
+    /// Return a conversational reply (no tool or shell execution).
+    Reply,
+}
+
 /// Parsed intent extracted from natural language by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedIntent {
+    /// What kind of action to take.
+    #[serde(default)]
+    pub action: ActionKind,
     /// Tool to invoke (e.g., "read_dtcs", "read_pid").
+    /// For Shell actions, contains the shell command string.
+    /// For Reply actions, may be empty.
     pub tool_name: String,
     /// Arguments for the tool as key-value pairs.
+    /// For Reply actions, may contain a "message" key with the reply text.
     #[serde(default)]
     pub tool_args: serde_json::Value,
     /// LLM confidence score (0.0 - 1.0).
@@ -147,6 +166,53 @@ mod tests {
         let tier = InferenceTier::CloudHaiku;
         let json = serde_json::to_string(&tier).unwrap();
         assert_eq!(json, r#""cloud_haiku""#);
+    }
+
+    #[test]
+    fn action_kind_default_is_tool() {
+        assert_eq!(ActionKind::default(), ActionKind::Tool);
+    }
+
+    #[test]
+    fn action_kind_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ActionKind::Tool).unwrap(),
+            r#""tool""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ActionKind::Shell).unwrap(),
+            r#""shell""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ActionKind::Reply).unwrap(),
+            r#""reply""#
+        );
+    }
+
+    #[test]
+    fn parsed_intent_backward_compat_no_action_field() {
+        // Old JSON without "action" field should deserialize with default (Tool)
+        let json = r#"{"tool_name": "read_dtcs", "tool_args": {}, "confidence": 0.95}"#;
+        let intent: ParsedIntent = serde_json::from_str(json).unwrap();
+        assert_eq!(intent.action, ActionKind::Tool);
+        assert_eq!(intent.tool_name, "read_dtcs");
+    }
+
+    #[test]
+    fn parsed_intent_with_shell_action() {
+        let json =
+            r#"{"action": "shell", "tool_name": "uname -a", "tool_args": {}, "confidence": 0.9}"#;
+        let intent: ParsedIntent = serde_json::from_str(json).unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "uname -a");
+    }
+
+    #[test]
+    fn parsed_intent_with_reply_action() {
+        let json = r#"{"action": "reply", "tool_name": "", "tool_args": {"message": "I'm doing well!"}, "confidence": 1.0}"#;
+        let intent: ParsedIntent = serde_json::from_str(json).unwrap();
+        assert_eq!(intent.action, ActionKind::Reply);
+        assert_eq!(intent.tool_args["message"], "I'm doing well!");
     }
 
     #[test]
