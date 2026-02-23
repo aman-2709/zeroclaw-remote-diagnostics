@@ -80,9 +80,34 @@ Transform the fleet agent from a rigid tool router into a true AI agent with thr
 - [x] Frontend: update CommandForm — action label/color, monospace pre for shell output, neutral "sent to device" message
 - [x] 367 Rust tests passing (up from 324), clippy clean, fmt clean, svelte-check clean
 
+## Phase 9: Frontend Polish — Shadow UI, Telemetry Charts, Richer Device Detail
+Frontend-only phase. No backend changes. All data already available via existing APIs and WS events.
+
+- [x] Add TelemetrySource type + TelemetryReading interface to types/index.ts
+- [x] Create shared format utils (timeAgo, shortDateTime, formatUptime) in utils/format.ts
+- [x] Update DeviceCard to use shared timeAgo from utils/format
+- [x] Create JsonView component — recursive JSON renderer with delta key highlighting
+- [x] Create ShadowPanel component — shadow list, detail (reported/desired/delta), edit desired, WS auto-refresh
+- [x] Create SparklineChart component — pure SVG line chart, hover tooltips, zero dependencies
+- [x] Create TelemetryPanel component — source filter tabs, sparkline charts per metric, text/json table
+- [x] Create ServiceIndicator component — status dot + label card for service status
+- [x] Rework device detail page with 4-tab layout (Overview, Commands, Shadows, Telemetry)
+- [x] Overview tab: device info cards, service status row (from "state" shadow), heartbeat pulse
+- [x] Commands tab: CommandForm + device-specific command history with WS live updates
+- [x] Shadows tab: ShadowPanel component
+- [x] Telemetry tab: TelemetryPanel component
+- [x] WS subscriptions: heartbeat, status_changed, command events, shadow updates
+- [x] pnpm check passes (0 errors, 0 warnings)
+- [x] pnpm build succeeds (production build)
+
+### Bug fix: MQTT response payload truncation
+- [x] Cap serialized CommandResponse to 9KB before MQTT publish (tool response_data was unbounded)
+- [x] Truncation preserves tool summary in response_text, marks response_data as truncated
+- [x] 3 new tests (small passthrough, oversized truncated, no-data unaffected)
+- [x] 379 total Rust tests passing, clippy clean
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)
 - [ ] Deployment pipeline (Lambda handler, CI/CD)
 - [ ] Bedrock cloud inference end-to-end wiring
-- [ ] Frontend: shadow UI page, telemetry charts, richer device detail

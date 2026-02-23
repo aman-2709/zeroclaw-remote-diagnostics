@@ -1,20 +1,12 @@
 <script lang="ts">
 	import type { DeviceSummary } from '$lib/types';
 	import { formatHardwareType } from '$lib/types/device';
+	import { timeAgo } from '$lib/utils/format';
 	import StatusBadge from './StatusBadge.svelte';
 
 	let { device }: { device: DeviceSummary } = $props();
 
-	const timeAgo = $derived(() => {
-		if (!device.last_heartbeat) return 'never';
-		const diff = Date.now() - new Date(device.last_heartbeat).getTime();
-		const mins = Math.floor(diff / 60000);
-		if (mins < 1) return 'just now';
-		if (mins < 60) return `${mins}m ago`;
-		const hours = Math.floor(mins / 60);
-		if (hours < 24) return `${hours}h ago`;
-		return `${Math.floor(hours / 24)}d ago`;
-	});
+	const heartbeatAgo = $derived(device.last_heartbeat ? timeAgo(device.last_heartbeat) : 'never');
 </script>
 
 <a
@@ -31,6 +23,6 @@
 		<StatusBadge status={device.status} />
 	</div>
 	<p class="mt-3 text-xs text-text-muted">
-		Last heartbeat: {timeAgo()}
+		Last heartbeat: {heartbeatAgo}
 	</p>
 </a>

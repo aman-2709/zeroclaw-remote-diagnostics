@@ -119,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
             Duration::from_secs(config.heartbeat_interval_secs),
             start_time,
             can_available,
+            config.ollama.enabled,
         ) => {
             tracing::error!("heartbeat loop exited unexpectedly");
         }

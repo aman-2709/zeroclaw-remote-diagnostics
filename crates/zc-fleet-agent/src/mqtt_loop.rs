@@ -8,12 +8,17 @@ use rumqttc::{Event, EventLoop, Packet};
 use zc_canbus_tools::CanInterface;
 use zc_log_tools::LogSource;
 use zc_mqtt_channel::{Channel, IncomingMessage, MqttChannel, ShadowClient, classify};
-use zc_protocol::commands::CommandStatus;
+use zc_protocol::commands::{CommandResponse, CommandStatus};
 
 use crate::executor::CommandExecutor;
 use crate::inference::OllamaClient;
 use crate::registry::ToolRegistry;
 use crate::shadow_sync::SharedShadowState;
+
+/// Maximum MQTT payload size in bytes.
+/// Leaves headroom for MQTT packet headers (~100 bytes) and topic string
+/// below the default broker limit of 10,240 bytes.
+const MAX_MQTT_PAYLOAD: usize = 9 * 1024;
 
 /// Drive the MQTT event loop and dispatch incoming messages.
 ///
@@ -104,6 +109,9 @@ async fn handle_message(
                 }
             }
 
+            // Cap response size to fit MQTT packet limit before publishing
+            let response = cap_response_size(response);
+
             // Publish response back
             if let Err(e) = channel.publish_response(&response).await {
                 tracing::error!(error = %e, "failed to publish command response");
@@ -121,6 +129,62 @@ async fn handle_message(
             tracing::debug!(topic = %topic, "ignoring unrecognized message");
         }
     }
+}
+
+/// Ensure the serialized response fits within the MQTT packet limit.
+///
+/// If the response exceeds [`MAX_MQTT_PAYLOAD`], truncates `response_data`
+/// first (it's the only unbounded field — shell output is already capped
+/// at 8 KB by `shell.rs`). Falls back to dropping `response_data` entirely
+/// and summarising in `response_text`.
+fn cap_response_size(mut response: CommandResponse) -> CommandResponse {
+    let Ok(bytes) = serde_json::to_vec(&response) else {
+        return response;
+    };
+
+    if bytes.len() <= MAX_MQTT_PAYLOAD {
+        return response;
+    }
+
+    let original_len = bytes.len();
+
+    // response_data is the only field that can grow unboundedly (tool output).
+    // Replace it with a size note and put a summary in response_text.
+    if let Some(data) = response.response_data.take() {
+        let tool_name = data
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tool");
+        let summary = data
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        response.response_data = Some(serde_json::json!({
+            "truncated": true,
+            "original_bytes": original_len,
+        }));
+
+        // Preserve the tool summary if one exists
+        if let Some(s) = summary {
+            response.response_text = Some(format!(
+                "{tool_name}: {s} [response truncated from {original_len}B]"
+            ));
+        } else {
+            let existing = response.response_text.unwrap_or_default();
+            response.response_text = Some(format!(
+                "{existing} [response truncated from {original_len}B]"
+            ));
+        }
+
+        tracing::warn!(
+            command_id = %response.command_id,
+            original_bytes = original_len,
+            "response truncated to fit MQTT packet limit"
+        );
+    }
+
+    response
 }
 
 /// Handle an incoming shadow delta from the cloud.
@@ -165,6 +229,7 @@ async fn handle_shadow_delta<C: Channel>(
 mod tests {
     use super::*;
     use zc_mqtt_channel::MockChannel;
+    use zc_protocol::commands::{CommandEnvelope, CommandResponse, InferenceTier};
     use zc_protocol::shadows::ShadowDelta;
 
     #[tokio::test]
@@ -208,5 +273,79 @@ mod tests {
 
         // No message should be published for unknown shadows.
         assert!(mock.published().is_empty());
+    }
+
+    // ── cap_response_size tests ─────────────────────────────────
+
+    fn make_response(data: Option<serde_json::Value>) -> CommandResponse {
+        let envelope = CommandEnvelope::new("fleet-alpha", "rpi-001", "tail logs", "admin");
+        CommandResponse {
+            command_id: envelope.id,
+            correlation_id: envelope.correlation_id,
+            device_id: "rpi-001".into(),
+            status: CommandStatus::Completed,
+            inference_tier: InferenceTier::Local,
+            response_text: Some("Tool 'tail_logs' executed successfully".into()),
+            response_data: data,
+            latency_ms: 100,
+            responded_at: chrono::Utc::now(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn small_response_passes_through() {
+        let resp = make_response(Some(
+            serde_json::json!({"tool_name": "log_stats", "lines": 42}),
+        ));
+        let capped = cap_response_size(resp.clone());
+        assert_eq!(
+            serde_json::to_vec(&capped).unwrap().len(),
+            serde_json::to_vec(&resp).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn oversized_response_data_is_truncated() {
+        // Build a response_data with ~12KB of log lines
+        let big_data = serde_json::json!({
+            "tool_name": "tail_logs",
+            "summary": "Last 100 lines from /var/log/syslog",
+            "success": true,
+            "data": {
+                "lines": vec!["x".repeat(120); 100], // 100 lines × ~120 chars
+            }
+        });
+        let resp = make_response(Some(big_data));
+        let original_bytes = serde_json::to_vec(&resp).unwrap().len();
+        assert!(
+            original_bytes > MAX_MQTT_PAYLOAD,
+            "test data must exceed limit"
+        );
+
+        let capped = cap_response_size(resp);
+
+        let capped_bytes = serde_json::to_vec(&capped).unwrap().len();
+        assert!(
+            capped_bytes <= MAX_MQTT_PAYLOAD,
+            "capped response must fit: {capped_bytes}"
+        );
+
+        // response_data should have truncated marker
+        let data = capped.response_data.unwrap();
+        assert_eq!(data["truncated"], true);
+
+        // response_text should contain the tool summary
+        let text = capped.response_text.unwrap();
+        assert!(text.contains("tail_logs"));
+        assert!(text.contains("truncated"));
+    }
+
+    #[test]
+    fn no_response_data_not_affected() {
+        let resp = make_response(None);
+        let capped = cap_response_size(resp.clone());
+        assert_eq!(capped.response_text, resp.response_text);
+        assert!(capped.response_data.is_none());
     }
 }
