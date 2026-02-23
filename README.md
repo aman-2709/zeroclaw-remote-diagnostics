@@ -18,8 +18,8 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
                │ MQTT (AWS IoT Core, mTLS)
 ┌──────────────▼──────────────────────────────────────────────────┐
 │  Edge Agent (Rust / ZeroClaw)                                   │
-│  CAN bus tools (5) · Log tools (4) · MQTT channel · Heartbeat  │
-│  Local LLM inference (Ollama) · Tool dispatch                   │
+│  CAN bus tools (5) · Log tools (5) · MQTT channel · Heartbeat  │
+│  Local LLM inference (Ollama) · Tool/Shell/Reply agent mode     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,6 +80,7 @@ frontend/              SvelteKit 5 + Tailwind CSS 4 (SPA, adapter-static)
 | `analyze_errors` | Classify errors into 9 categories (connection, permission, resource, etc.) |
 | `log_stats` | Aggregate statistics: severity distribution, top sources, time range |
 | `tail_logs` | Tail recent log entries with optional severity filter |
+| `query_journal` | Query systemd journal by unit name (runs `journalctl --output=export`) |
 
 Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JSON lines, plaintext.
 
@@ -90,20 +91,25 @@ Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JS
 | `GET` | `/health` | Health check |
 | `GET` | `/api/v1/devices` | List all devices |
 | `GET` | `/api/v1/devices/{id}` | Get device details |
-| `GET` | `/api/v1/devices/{id}/telemetry` | Get device telemetry |
 | `POST` | `/api/v1/commands` | Dispatch a NL command to a device |
 | `GET` | `/api/v1/commands` | List recent commands |
 | `GET` | `/api/v1/commands/{id}` | Get command status and response |
 | `POST` | `/api/v1/commands/{id}/respond` | Ingest command response from device |
 | `POST` | `/api/v1/heartbeat` | Ingest device heartbeat |
+| `GET/POST` | `/api/v1/devices/{id}/telemetry` | Get / ingest telemetry |
+| `GET` | `/api/v1/devices/{id}/shadows` | List device shadows |
+| `GET` | `/api/v1/devices/{id}/shadows/{name}` | Get shadow (reported + desired + delta) |
+| `PUT` | `/api/v1/devices/{id}/shadows/{name}/desired` | Set desired state (publishes delta) |
 | `GET` | `/api/v1/ws` | WebSocket for real-time events |
 
 ### WebSocket Events
 
 - `command_dispatched` — new command sent to device
-- `command_response` — device response received
+- `command_response` — device response received (includes `response_data`)
 - `device_heartbeat` — device heartbeat received
 - `device_status_changed` — device status transition
+- `telemetry_ingested` — telemetry batch received
+- `shadow_updated` — device shadow state changed
 
 ## Getting Started
 
@@ -119,7 +125,7 @@ Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JS
 # Build all crates
 cargo build --workspace
 
-# Run all tests (245 tests, no external dependencies required)
+# Run all tests (393 tests, no external dependencies required)
 cargo test --workspace
 
 # Lint
@@ -128,6 +134,31 @@ cargo clippy --workspace -- -D warnings
 # Format
 cargo fmt --all
 cargo fmt --all -- --check   # check only
+```
+
+### Local Dev (Full Loop)
+
+Requires Mosquitto MQTT broker running on `localhost:1883`.
+
+```bash
+# Terminal 1: Cloud API with MQTT bridge
+MQTT_ENABLED=true MQTT_FLEET_ID=local-fleet cargo run -p zc-cloud-api
+
+# Terminal 2: Fleet agent (uses dev/agent.toml)
+RUST_LOG=info cargo run -p zc-fleet-agent -- dev/agent.toml
+
+# Terminal 3: Frontend dev server
+cd frontend && pnpm install && pnpm dev
+```
+
+If running the cloud API on a non-default port:
+
+```bash
+# Terminal 1
+PORT=3002 MQTT_ENABLED=true MQTT_FLEET_ID=local-fleet cargo run -p zc-cloud-api
+
+# Terminal 3 — must match
+cd frontend && API_URL=http://localhost:3002 pnpm dev
 ```
 
 ### Run the Cloud API

@@ -64,6 +64,7 @@ export type WsEvent =
 			status: string;
 			inference_tier: string | null;
 			response_text: string | null;
+			response_data: unknown | null;
 			latency_ms: number | null;
 			responded_at: string;
 	  }

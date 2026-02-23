@@ -24,6 +24,7 @@ pub enum WsEvent {
         status: String,
         inference_tier: Option<String>,
         response_text: Option<String>,
+        response_data: Option<serde_json::Value>,
         latency_ms: Option<i64>,
         responded_at: DateTime<Utc>,
     },
@@ -103,6 +104,7 @@ mod tests {
             status: "completed".into(),
             inference_tier: Some("local".into()),
             response_text: Some("No DTCs found".into()),
+            response_data: None,
             latency_ms: Some(45),
             responded_at: Utc::now(),
         };
