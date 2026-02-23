@@ -60,6 +60,7 @@ mod tests {
             broker_host: "localhost".into(),
             broker_port: 1883,
             client_id: "test".into(),
+            use_tls: true,
             client_cert_path: "/nonexistent/cert.pem".into(),
             client_key_path: "/nonexistent/key.pem".into(),
             ca_cert_path: "/nonexistent/ca.pem".into(),

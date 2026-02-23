@@ -45,8 +45,18 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(tool_count = registry.len(), "tool registry initialized");
 
     // ── MQTT channel ────────────────────────────────────────────
-    let (channel, eventloop) =
-        zc_mqtt_channel::MqttChannel::new(&config.mqtt, &config.fleet_id, &config.device_id)?;
+    let (channel, eventloop) = if config.mqtt.use_tls {
+        zc_mqtt_channel::MqttChannel::new(&config.mqtt, &config.fleet_id, &config.device_id)?
+    } else {
+        tracing::info!("MQTT plaintext mode (no TLS)");
+        zc_mqtt_channel::MqttChannel::new_plaintext(
+            &config.mqtt.broker_host,
+            config.mqtt.broker_port,
+            &config.mqtt.client_id,
+            &config.fleet_id,
+            &config.device_id,
+        )
+    };
 
     // Subscribe to inbound topics
     channel.subscribe_commands().await?;
