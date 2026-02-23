@@ -51,8 +51,9 @@ Test the complete command lifecycle on a single x86 machine: frontend → cloud 
 - [x] Test loop: send command via curl → cloud API → MQTT → fleet agent → response back (search_logs succeeded, read_dtcs mock timeout as expected)
 - [x] Test log tool commands (search_logs on /var/log/syslog — 69K lines scanned, 0 matches, success)
 - [x] Test CAN tool commands (read_dtcs — mock timeout expected, response propagated correctly)
-- [ ] Test heartbeat + shadow sync visible in frontend
-- [ ] Document local dev setup in README or docs/
+- [x] Test heartbeat + shadow sync visible via API (heartbeats updating last_heartbeat, shadow v5 with uptime/tool/command state)
+- [x] Frontend proxy wired (vite.config.ts API_URL env var, ws:true for WebSocket)
+- [x] Document local dev setup (docs/test.md — manual test guide)
 
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)

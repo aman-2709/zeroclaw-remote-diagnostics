@@ -178,11 +178,29 @@ curl -s http://localhost:3002/api/v1/commands | python3 -m json.tool
 
 Shows all commands with their responses — your full audit trail.
 
+## 9. Frontend (Optional)
+
+Open a **4th terminal**:
+
+```bash
+cd frontend
+API_URL=http://localhost:3002 pnpm dev -- --port 5174
+```
+
+Open http://localhost:5174 in your browser. The frontend proxies all `/api` and WebSocket requests to the cloud API on :3002.
+
+Things to verify:
+- Device list shows `dev-001` with recent `last_heartbeat`
+- Sending a command from the CommandForm shows "waiting for response" then the result
+- Connection indicator shows "Live" (WebSocket connected)
+- Shadow data visible at `/api/v1/devices/dev-001/shadows/diagnostics`
+
 ## Quick Reference
 
 | Service | URL | Port |
 |---------|-----|------|
 | Cloud API | http://localhost:3002 | 3002 |
+| Frontend | http://localhost:5174 | 5174 |
 | Mosquitto | localhost | 1883 |
 | Ollama | http://localhost:11434 | 11434 |
 
