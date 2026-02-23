@@ -10,3 +10,4 @@ pub mod heartbeat;
 pub mod inference;
 pub mod mqtt_loop;
 pub mod registry;
+pub mod shadow_sync;

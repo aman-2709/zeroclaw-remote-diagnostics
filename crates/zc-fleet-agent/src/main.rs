@@ -3,14 +3,18 @@
 //! Wires MQTT connectivity, CAN bus tools, and log analysis into a
 //! single binary that runs on ARM edge devices.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
 use zc_fleet_agent::config::AgentConfig;
 use zc_fleet_agent::inference;
 use zc_fleet_agent::registry::ToolRegistry;
-use zc_fleet_agent::{heartbeat, mqtt_loop};
+use zc_fleet_agent::shadow_sync::{DeviceShadowState, SharedShadowState};
+use zc_fleet_agent::{heartbeat, mqtt_loop, shadow_sync};
+use zc_mqtt_channel::ShadowClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -71,6 +75,24 @@ async fn main() -> anyhow::Result<()> {
     // ── Log source ──────────────────────────────────────────────
     let log_source = zc_log_tools::FileLogSource;
 
+    // ── Shadow state ────────────────────────────────────────────
+    let shadow_state: SharedShadowState = Arc::new(RwLock::new(DeviceShadowState {
+        tool_count: registry.len(),
+        can_status: if can_available {
+            "running".to_string()
+        } else {
+            "stopped".to_string()
+        },
+        ollama_status: if config.ollama.enabled {
+            "enabled".to_string()
+        } else {
+            "disabled".to_string()
+        },
+        ..Default::default()
+    }));
+
+    let shadow_client = ShadowClient::new(&channel, &config.fleet_id, &config.device_id);
+
     // ── Start background tasks ──────────────────────────────────
     let start_time = tokio::time::Instant::now();
 
@@ -78,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::select! {
         // Drive the MQTT event loop + dispatch commands
-        () = mqtt_loop::run(eventloop, &channel, &registry, &can_interface, &log_source, ollama_ref) => {
+        () = mqtt_loop::run(eventloop, &channel, &registry, &can_interface, &log_source, ollama_ref, &shadow_state) => {
             tracing::error!("MQTT loop exited unexpectedly");
         }
         // Publish periodic heartbeats
@@ -89,6 +111,15 @@ async fn main() -> anyhow::Result<()> {
             can_available,
         ) => {
             tracing::error!("heartbeat loop exited unexpectedly");
+        }
+        // Periodic shadow state sync
+        () = shadow_sync::run(
+            &shadow_client,
+            &shadow_state,
+            Duration::from_secs(config.shadow_sync_interval_secs),
+            start_time,
+        ) => {
+            tracing::error!("shadow sync loop exited unexpectedly");
         }
         // Graceful shutdown on SIGINT/SIGTERM
         _ = tokio::signal::ctrl_c() => {

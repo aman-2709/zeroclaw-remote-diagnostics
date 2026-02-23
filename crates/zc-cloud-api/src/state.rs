@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use zc_protocol::commands::{CommandEnvelope, CommandResponse};
 use zc_protocol::device::{DeviceInfo, DeviceStatus, HardwareType};
+use zc_protocol::shadows::ShadowState;
 
 use crate::events::WsEvent;
 use crate::inference::InferenceEngine;
@@ -33,6 +34,8 @@ pub struct AppState {
     pub inference: Arc<dyn InferenceEngine>,
     /// MQTT channel for publishing commands to devices (None when MQTT disabled).
     pub mqtt: Option<Arc<dyn zc_mqtt_channel::Channel>>,
+    /// In-memory shadow store: (device_id, shadow_name) -> ShadowState.
+    pub shadows: Arc<RwLock<HashMap<(String, String), ShadowState>>>,
 }
 
 /// A command with its response (if available).
@@ -54,6 +57,7 @@ impl AppState {
             event_tx,
             inference,
             mqtt: None,
+            shadows: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -67,6 +71,7 @@ impl AppState {
             event_tx,
             inference: Arc::new(crate::inference::RuleBasedEngine::new()),
             mqtt: None,
+            shadows: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -106,6 +111,7 @@ impl AppState {
             event_tx,
             inference: Arc::new(crate::inference::RuleBasedEngine::new()),
             mqtt: None,
+            shadows: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

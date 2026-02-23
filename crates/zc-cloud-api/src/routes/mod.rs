@@ -5,11 +5,12 @@ pub mod devices;
 pub mod health;
 pub mod heartbeat;
 pub mod responses;
+pub mod shadows;
 pub mod telemetry;
 pub mod ws;
 
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -42,6 +43,13 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/devices/{id}/telemetry",
             get(telemetry::get_telemetry).post(telemetry::ingest_telemetry),
+        )
+        // Shadow endpoints
+        .route("/devices/{id}/shadows", get(shadows::list_shadows))
+        .route("/devices/{id}/shadows/{name}", get(shadows::get_shadow))
+        .route(
+            "/devices/{id}/shadows/{name}/desired",
+            put(shadows::set_desired),
         )
         // Heartbeat ingestion
         .route("/heartbeat", post(heartbeat::ingest_heartbeat))

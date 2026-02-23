@@ -105,6 +105,10 @@ async fn main() -> anyhow::Result<()> {
             .subscribe_fleet_heartbeats()
             .await
             .map_err(|e| anyhow::anyhow!("failed to subscribe to fleet heartbeats: {e}"))?;
+        channel
+            .subscribe_fleet_shadow_updates()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to subscribe to fleet shadow updates: {e}"))?;
         // Subscribe to all three telemetry sources.
         for source in &["obd2", "system", "canbus"] {
             channel

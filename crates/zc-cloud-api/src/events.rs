@@ -57,6 +57,14 @@ pub enum WsEvent {
         source: String,
         timestamp: DateTime<Utc>,
     },
+
+    /// A device shadow was updated.
+    ShadowUpdated {
+        device_id: String,
+        shadow_name: String,
+        version: u64,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 #[cfg(test)]
@@ -101,6 +109,20 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"command_response""#));
         assert!(json.contains("No DTCs found"));
+    }
+
+    #[test]
+    fn shadow_updated_event_serializes() {
+        let event = WsEvent::ShadowUpdated {
+            device_id: "rpi-001".into(),
+            shadow_name: "diagnostics".into(),
+            version: 7,
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"shadow_updated""#));
+        assert!(json.contains(r#""shadow_name":"diagnostics""#));
+        assert!(json.contains(r#""version":7"#));
     }
 
     #[test]

@@ -225,6 +225,70 @@ impl TestHarness {
         (status, json)
     }
 
+    /// List shadows via REST API (GET /api/v1/devices/{id}/shadows).
+    pub async fn list_shadows(&self, device_id: &str) -> (StatusCode, serde_json::Value) {
+        let url = format!("/api/v1/devices/{device_id}/shadows");
+        let response = self
+            .cloud_router
+            .clone()
+            .oneshot(Request::get(&url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        (status, json)
+    }
+
+    /// Get a shadow via REST API (GET /api/v1/devices/{id}/shadows/{name}).
+    pub async fn get_shadow(
+        &self,
+        device_id: &str,
+        shadow_name: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let url = format!("/api/v1/devices/{device_id}/shadows/{shadow_name}");
+        let response = self
+            .cloud_router
+            .clone()
+            .oneshot(Request::get(&url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        (status, json)
+    }
+
+    /// Set desired shadow state via REST API (PUT /api/v1/devices/{id}/shadows/{name}/desired).
+    pub async fn set_desired_shadow(
+        &self,
+        device_id: &str,
+        shadow_name: &str,
+        desired: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let url = format!("/api/v1/devices/{device_id}/shadows/{shadow_name}/desired");
+        let body = serde_json::json!({"desired": desired});
+
+        let response = self
+            .cloud_router
+            .clone()
+            .oneshot(
+                Request::put(&url)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        (status, json)
+    }
+
     /// Ingest telemetry via REST API (POST /api/v1/devices/{id}/telemetry).
     pub async fn rest_ingest_telemetry(
         &self,

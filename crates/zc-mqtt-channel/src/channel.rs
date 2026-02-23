@@ -195,6 +195,12 @@ impl MqttChannel {
         self.subscribe(&topic, QoS::AtLeastOnce).await
     }
 
+    /// Subscribe to all device shadow updates in the fleet (cloud-side).
+    pub async fn subscribe_fleet_shadow_updates(&self) -> MqttResult<()> {
+        let topic = topics::fleet_shadow_updates(&self.fleet_id);
+        self.subscribe(&topic, QoS::AtLeastOnce).await
+    }
+
     // ── Internal helpers ──────────────────────────────────────
 
     async fn publish_json<T: Serialize>(&self, topic: &str, payload: &T) -> MqttResult<()> {

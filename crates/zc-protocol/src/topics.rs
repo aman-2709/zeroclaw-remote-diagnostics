@@ -96,6 +96,11 @@ pub fn fleet_telemetry(fleet_id: &str, source: &str) -> String {
     format!("{PREFIX}/{fleet_id}/+/telemetry/{source}")
 }
 
+/// Subscribe to all device shadow updates in a fleet (for cloud bridge).
+pub fn fleet_shadow_updates(fleet_id: &str) -> String {
+    format!("{PREFIX}/{fleet_id}/+/shadow/update")
+}
+
 // ─── Topic parsing ───
 
 /// Parsed MQTT topic components.
@@ -241,6 +246,14 @@ mod tests {
         assert_eq!(parsed.device_id, None);
         assert_eq!(parsed.category, "command");
         assert_eq!(parsed.action, "request");
+    }
+
+    #[test]
+    fn fleet_shadow_updates_topic() {
+        assert_eq!(
+            fleet_shadow_updates("fleet-alpha"),
+            "fleet/fleet-alpha/+/shadow/update"
+        );
     }
 
     #[test]
