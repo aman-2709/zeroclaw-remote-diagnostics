@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { api, ApiClientError } from '$lib/api/client';
 	import type { DeviceInfo, TelemetryResponse } from '$lib/types';
+	import { formatHardwareType } from '$lib/types/device';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import CommandForm from '$lib/components/CommandForm.svelte';
 
@@ -51,7 +52,7 @@
 			<div class="flex items-start justify-between">
 				<div>
 					<h1 class="font-mono text-2xl font-bold">{device.device_id}</h1>
-					<p class="mt-1 text-text-muted">Fleet: {device.fleet_id}</p>
+					<p class="mt-1 text-text-muted">Fleet: {typeof device.metadata?.fleet === 'string' ? device.metadata.fleet : device.fleet_id}</p>
 				</div>
 				<StatusBadge status={device.status} />
 			</div>
@@ -59,7 +60,7 @@
 			<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				<div class="rounded-lg border border-border bg-white p-4">
 					<dt class="text-xs font-medium text-text-muted uppercase">Hardware</dt>
-					<dd class="mt-1 font-mono text-sm">{device.hardware_type}</dd>
+					<dd class="mt-1 font-mono text-sm">{formatHardwareType(device.hardware_type)}</dd>
 				</div>
 				<div class="rounded-lg border border-border bg-white p-4">
 					<dt class="text-xs font-medium text-text-muted uppercase">VIN</dt>
@@ -87,7 +88,11 @@
 				<h2 class="mb-4 text-lg font-semibold">Command Interface</h2>
 				<CommandForm
 					deviceId={device.device_id}
-					fleetId={typeof device.fleet_id === 'string' ? device.fleet_id : ''}
+					fleetId={typeof device.metadata?.fleet === 'string'
+						? device.metadata.fleet
+						: typeof device.fleet_id === 'string'
+							? device.fleet_id
+							: ''}
 				/>
 			</section>
 
