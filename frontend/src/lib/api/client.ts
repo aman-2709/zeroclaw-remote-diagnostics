@@ -9,7 +9,9 @@ import type {
 	CommandSummary,
 	SendCommandRequest,
 	HealthResponse,
-	TelemetryResponse
+	TelemetryResponse,
+	ShadowSummary,
+	ShadowResponse
 } from '$lib/types';
 
 const BASE = '/api/v1';
@@ -88,6 +90,29 @@ export const api = {
 	/** GET /api/v1/commands/:id */
 	getCommand(id: string): Promise<CommandRecord> {
 		return request(`${BASE}/commands/${encodeURIComponent(id)}`);
+	},
+
+	/** GET /api/v1/devices/:id/shadows */
+	listShadows(deviceId: string): Promise<ShadowSummary[]> {
+		return request(`${BASE}/devices/${encodeURIComponent(deviceId)}/shadows`);
+	},
+
+	/** GET /api/v1/devices/:id/shadows/:name */
+	getShadow(deviceId: string, name: string): Promise<ShadowResponse> {
+		return request(
+			`${BASE}/devices/${encodeURIComponent(deviceId)}/shadows/${encodeURIComponent(name)}`
+		);
+	},
+
+	/** PUT /api/v1/devices/:id/shadows/:name/desired */
+	setDesired(deviceId: string, name: string, desired: unknown): Promise<ShadowResponse> {
+		return request(
+			`${BASE}/devices/${encodeURIComponent(deviceId)}/shadows/${encodeURIComponent(name)}/desired`,
+			{
+				method: 'PUT',
+				body: JSON.stringify({ desired })
+			}
+		);
 	}
 };
 

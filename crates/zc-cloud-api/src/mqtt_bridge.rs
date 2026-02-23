@@ -2,10 +2,11 @@
 //! through the existing API logic (heartbeat, response, telemetry).
 
 use chrono::Utc;
-use rumqttc::{Event, Packet};
+use rumqttc::{Event, Packet, QoS};
 
 use zc_protocol::commands::CommandResponse;
 use zc_protocol::device::Heartbeat;
+use zc_protocol::shadows::{ShadowDelta, ShadowUpdate};
 use zc_protocol::telemetry::TelemetryBatch;
 use zc_protocol::topics;
 
@@ -50,6 +51,11 @@ pub async fn handle_incoming(topic: &str, payload: &[u8], state: &AppState) {
         ("telemetry", _source) => {
             if let Some(device_id) = &parsed.device_id {
                 handle_telemetry(device_id, payload, state).await;
+            }
+        }
+        ("shadow", "update") => {
+            if let Some(device_id) = &parsed.device_id {
+                handle_shadow_update(&parsed.fleet_id, device_id, payload, state).await;
             }
         }
         _ => {
@@ -220,6 +226,146 @@ async fn handle_telemetry(device_id: &str, payload: &[u8], state: &AppState) {
     });
 }
 
+/// Handle an incoming shadow update from a device.
+async fn handle_shadow_update(fleet_id: &str, device_id: &str, payload: &[u8], state: &AppState) {
+    let update: ShadowUpdate = match serde_json::from_slice(payload) {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(error = %e, device_id = device_id, "failed to parse shadow update payload");
+            return;
+        }
+    };
+
+    let shadow_name = update.shadow_name.clone();
+    let version;
+
+    if let Some(pool) = &state.pool {
+        match crate::db::shadows::upsert_reported(pool, device_id, &shadow_name, &update.reported)
+            .await
+        {
+            Ok(row) => {
+                version = row.version as u64;
+                // Compute delta and publish if non-empty.
+                let delta = compute_delta(&row.desired, &row.reported);
+                if !delta.as_object().is_none_or(|o| o.is_empty()) {
+                    publish_shadow_delta(state, fleet_id, device_id, &shadow_name, delta, version)
+                        .await;
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to upsert shadow reported state");
+                return;
+            }
+        }
+    } else {
+        let mut shadows = state.shadows.write().await;
+        let key = (device_id.to_string(), shadow_name.clone());
+        let entry = shadows
+            .entry(key)
+            .or_insert_with(|| zc_protocol::shadows::ShadowState {
+                reported: serde_json::Value::Object(Default::default()),
+                desired: serde_json::Value::Object(Default::default()),
+                version: 0,
+                last_updated: Utc::now(),
+            });
+
+        // Merge reported state (top-level key replacement).
+        if let (Some(existing), Some(incoming)) =
+            (entry.reported.as_object_mut(), update.reported.as_object())
+        {
+            for (k, v) in incoming {
+                existing.insert(k.clone(), v.clone());
+            }
+        }
+        entry.version += 1;
+        entry.last_updated = Utc::now();
+        version = entry.version;
+
+        // Compute delta and publish if non-empty.
+        let delta = compute_delta(&entry.desired, &entry.reported);
+        if !delta.as_object().is_none_or(|o| o.is_empty()) {
+            // Drop the write lock before publishing.
+            let delta_clone = delta.clone();
+            drop(shadows);
+            publish_shadow_delta(
+                state,
+                fleet_id,
+                device_id,
+                &shadow_name,
+                delta_clone,
+                version,
+            )
+            .await;
+        }
+    }
+
+    tracing::info!(
+        device_id = device_id,
+        shadow = shadow_name,
+        version = version,
+        "shadow update processed"
+    );
+
+    let _ = state.event_tx.send(WsEvent::ShadowUpdated {
+        device_id: device_id.to_string(),
+        shadow_name,
+        version,
+        timestamp: Utc::now(),
+    });
+}
+
+/// Compute delta: keys in `desired` that differ from `reported`.
+pub(crate) fn compute_delta(
+    desired: &serde_json::Value,
+    reported: &serde_json::Value,
+) -> serde_json::Value {
+    let mut delta = serde_json::Map::new();
+
+    if let Some(desired_obj) = desired.as_object() {
+        let reported_obj = reported.as_object();
+        for (key, desired_val) in desired_obj {
+            let reported_val = reported_obj.and_then(|r| r.get(key));
+            if reported_val != Some(desired_val) {
+                delta.insert(key.clone(), desired_val.clone());
+            }
+        }
+    }
+
+    serde_json::Value::Object(delta)
+}
+
+/// Publish a ShadowDelta to the device via MQTT.
+async fn publish_shadow_delta(
+    state: &AppState,
+    fleet_id: &str,
+    device_id: &str,
+    shadow_name: &str,
+    delta: serde_json::Value,
+    version: u64,
+) {
+    let shadow_delta = ShadowDelta {
+        device_id: device_id.to_string(),
+        shadow_name: shadow_name.to_string(),
+        delta,
+        version,
+        timestamp: Utc::now(),
+    };
+
+    if let Some(mqtt) = &state.mqtt {
+        let topic = topics::shadow_delta(fleet_id, device_id);
+        match serde_json::to_vec(&shadow_delta) {
+            Ok(payload) => {
+                if let Err(e) = mqtt.publish(&topic, &payload, QoS::AtLeastOnce).await {
+                    tracing::error!(error = %e, "failed to publish shadow delta");
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to serialize shadow delta");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,5 +509,113 @@ mod tests {
 
         // No event should be broadcast for malformed data.
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_shadow_update_stores_reported() {
+        let state = sample_state();
+        let mut rx = state.event_tx.subscribe();
+
+        let update = zc_protocol::shadows::ShadowUpdate {
+            device_id: "rpi-001".into(),
+            shadow_name: "diagnostics".into(),
+            reported: serde_json::json!({"firmware": "0.1.0", "uptime": 120}),
+            version: 1,
+        };
+
+        let payload = serde_json::to_vec(&update).unwrap();
+        let topic = topics::shadow_update("fleet-alpha", "rpi-001");
+        handle_incoming(&topic, &payload, &state).await;
+
+        // Verify in-memory shadow was stored.
+        let shadows = state.shadows.read().await;
+        let shadow = shadows
+            .get(&("rpi-001".to_string(), "diagnostics".to_string()))
+            .unwrap();
+        assert_eq!(shadow.reported["firmware"], "0.1.0");
+        assert_eq!(shadow.version, 1);
+
+        // Verify broadcast event.
+        let event = rx.try_recv().unwrap();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("shadow_updated"));
+        assert!(json.contains("diagnostics"));
+    }
+
+    #[tokio::test]
+    async fn handle_shadow_update_broadcasts_event() {
+        let state = sample_state();
+        let mut rx = state.event_tx.subscribe();
+
+        let update = zc_protocol::shadows::ShadowUpdate {
+            device_id: "rpi-001".into(),
+            shadow_name: "config".into(),
+            reported: serde_json::json!({"mode": "normal"}),
+            version: 1,
+        };
+
+        let payload = serde_json::to_vec(&update).unwrap();
+        let topic = topics::shadow_update("fleet-alpha", "rpi-001");
+        handle_incoming(&topic, &payload, &state).await;
+
+        let event = rx.try_recv().unwrap();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"shadow_updated""#));
+        assert!(json.contains(r#""device_id":"rpi-001""#));
+    }
+
+    #[test]
+    fn compute_delta_finds_differences() {
+        let desired = serde_json::json!({"firmware": "0.2.0", "mode": "debug"});
+        let reported = serde_json::json!({"firmware": "0.1.0", "mode": "debug"});
+        let delta = compute_delta(&desired, &reported);
+        assert_eq!(delta["firmware"], "0.2.0");
+        assert!(delta.get("mode").is_none());
+    }
+
+    #[test]
+    fn compute_delta_empty_when_matching() {
+        let state = serde_json::json!({"firmware": "0.2.0"});
+        let delta = compute_delta(&state, &state);
+        assert!(delta.as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shadow_update_publishes_delta_when_desired_differs() {
+        let mqtt = std::sync::Arc::new(zc_mqtt_channel::MockChannel::new());
+        let mut state = sample_state();
+        state.mqtt = Some(mqtt.clone());
+
+        // Pre-set desired state.
+        {
+            let mut shadows = state.shadows.write().await;
+            shadows.insert(
+                ("rpi-001".to_string(), "config".to_string()),
+                zc_protocol::shadows::ShadowState {
+                    reported: serde_json::json!({}),
+                    desired: serde_json::json!({"firmware": "0.2.0"}),
+                    version: 0,
+                    last_updated: Utc::now(),
+                },
+            );
+        }
+
+        let update = zc_protocol::shadows::ShadowUpdate {
+            device_id: "rpi-001".into(),
+            shadow_name: "config".into(),
+            reported: serde_json::json!({"firmware": "0.1.0"}),
+            version: 1,
+        };
+
+        let payload = serde_json::to_vec(&update).unwrap();
+        let topic = topics::shadow_update("fleet-alpha", "rpi-001");
+        handle_incoming(&topic, &payload, &state).await;
+
+        // Verify a delta was published via MQTT.
+        let delta_msgs = mqtt.published_to("fleet/fleet-alpha/rpi-001/shadow/delta");
+        assert_eq!(delta_msgs.len(), 1);
+        let delta: zc_protocol::shadows::ShadowDelta =
+            serde_json::from_slice(&delta_msgs[0].payload).unwrap();
+        assert_eq!(delta.delta["firmware"], "0.2.0");
     }
 }

@@ -19,6 +19,22 @@ export interface ApiError {
 	status: number;
 }
 
+export interface ShadowSummary {
+	shadow_name: string;
+	version: number;
+	last_updated: string;
+}
+
+export interface ShadowResponse {
+	device_id: string;
+	shadow_name: string;
+	reported: unknown;
+	desired: unknown;
+	delta: unknown;
+	version: number;
+	last_updated: string;
+}
+
 /** WebSocket event types matching server-side WsEvent. */
 export type WsEvent =
 	| {
@@ -63,5 +79,12 @@ export type WsEvent =
 			device_id: string;
 			count: number;
 			source: string;
+			timestamp: string;
+	  }
+	| {
+			type: 'shadow_updated';
+			device_id: string;
+			shadow_name: string;
+			version: number;
 			timestamp: string;
 	  };

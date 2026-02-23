@@ -4,6 +4,7 @@
 
 pub mod commands;
 pub mod devices;
+pub mod shadows;
 pub mod telemetry;
 
 use sqlx::PgPool;
@@ -27,6 +28,9 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
         .execute(&pool)
         .await?;
     sqlx::raw_sql(include_str!("../../migrations/004_heartbeats.sql"))
+        .execute(&pool)
+        .await?;
+    sqlx::raw_sql(include_str!("../../migrations/005_device_shadows.sql"))
         .execute(&pool)
         .await?;
     tracing::info!("migrations complete");

@@ -24,6 +24,9 @@ pub struct AgentConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub log_paths: Vec<String>,
+    /// Shadow sync interval in seconds.
+    #[serde(default = "default_shadow_sync_interval")]
+    pub shadow_sync_interval_secs: u64,
     /// Local Ollama inference settings. Optional — defaults to enabled.
     #[serde(default)]
     pub ollama: OllamaConfig,
@@ -31,6 +34,10 @@ pub struct AgentConfig {
 
 fn default_heartbeat_interval() -> u64 {
     30
+}
+
+fn default_shadow_sync_interval() -> u64 {
+    60
 }
 
 impl AgentConfig {
@@ -92,6 +99,41 @@ keepalive_secs = 60
         assert_eq!(config.heartbeat_interval_secs, 15);
         assert_eq!(config.log_paths.len(), 2);
         assert_eq!(config.mqtt.keepalive_secs, 60);
+    }
+
+    #[test]
+    fn deserialize_default_shadow_sync_interval() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.shadow_sync_interval_secs, 60);
+    }
+
+    #[test]
+    fn deserialize_custom_shadow_sync_interval() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+shadow_sync_interval_secs = 120
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.shadow_sync_interval_secs, 120);
     }
 
     #[test]
