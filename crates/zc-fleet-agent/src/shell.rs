@@ -4,14 +4,16 @@
 //! - Only pre-approved read-only commands
 //! - No shell metacharacters (prevents injection)
 //! - No access to sensitive paths
-//! - 5-second timeout, 64KB output cap
+//! - 5-second timeout, 8KB output cap (fits within MQTT 10KB packet limit)
 //! - Uses `tokio::process::Command` directly (no shell interpretation)
 
 use std::time::Duration;
 use tokio::process::Command;
 
-/// Maximum output size in bytes (64 KB).
-const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+/// Maximum output size in bytes (8 KB).
+/// Keeps MQTT response payload under the default 10KB packet limit
+/// after accounting for the JSON envelope overhead (~500 bytes).
+const MAX_OUTPUT_BYTES: usize = 8 * 1024;
 
 /// Command execution timeout.
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -26,9 +28,11 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "uptime",
     "ps",
     "ip",
+    "ifconfig",
     "hostname",
     "sensors",
     "lscpu",
+    "lsblk",
     "head",
     "tail",
     "wc",
@@ -39,6 +43,8 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "journalctl",
     "systemctl",
     "vcgencmd",
+    "top",
+    "whoami",
 ];
 
 /// Commands explicitly blocked (dangerous even if somehow reached).
@@ -184,7 +190,7 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
         if let Some(pos) = stdout.rfind('\n') {
             stdout.truncate(pos + 1);
         }
-        stdout.push_str("\n... [output truncated at 64KB]");
+        stdout.push_str("\n... [output truncated at 8KB]");
         truncated = true;
     }
 
