@@ -70,6 +70,11 @@ impl ApiConfig {
     /// Load config from environment variables.
     pub fn from_env() -> Self {
         Self {
+            host: std::env::var("HOST").unwrap_or_else(|_| default_host()),
+            port: std::env::var("PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_port()),
             bedrock_enabled: env_bool("BEDROCK_ENABLED"),
             mqtt_enabled: env_bool("MQTT_ENABLED"),
             mqtt_broker_host: std::env::var("MQTT_BROKER_HOST")

@@ -40,7 +40,21 @@
 - [x] Frontend types + API client methods for shadows
 - [x] 324 total tests, clippy clean, svelte-check clean
 
-## Remaining Work
+## Phase 7: Local Full-Loop Smoke Test
+Test the complete command lifecycle on a single x86 machine: frontend → cloud API → MQTT → fleet agent → tool execution → response back to frontend.
+
+- [x] Local MQTT broker setup (mosquitto, no TLS)
+- [x] Fleet agent config for local dev (mock CAN, real logs, Ollama, plaintext MQTT)
+- [x] Cloud API config for local dev (in-memory state, plaintext MQTT, PORT env var)
+- [x] Verify Ollama model available (phi3:mini)
+- [x] Start all services locally (mosquitto :1883, cloud API :3002, fleet agent)
+- [x] Test loop: send command via curl → cloud API → MQTT → fleet agent → response back (search_logs succeeded, read_dtcs mock timeout as expected)
+- [x] Test log tool commands (search_logs on /var/log/syslog — 69K lines scanned, 0 matches, success)
+- [x] Test CAN tool commands (read_dtcs — mock timeout expected, response propagated correctly)
+- [ ] Test heartbeat + shadow sync visible in frontend
+- [ ] Document local dev setup in README or docs/
+
+## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)
 - [ ] Deployment pipeline (Lambda handler, CI/CD)

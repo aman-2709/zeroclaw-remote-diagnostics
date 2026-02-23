@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
                 broker_host: config.mqtt_broker_host.clone(),
                 broker_port: config.mqtt_broker_port,
                 client_id: "zc-cloud-api".to_string(),
+                use_tls: true,
                 ca_cert_path: config
                     .mqtt_ca_cert
                     .clone()

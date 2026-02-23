@@ -1,0 +1,17 @@
+fleet_id = "local-fleet"
+device_id = "dev-001"
+heartbeat_interval_secs = 10
+shadow_sync_interval_secs = 30
+log_paths = ["/var/log/syslog"]
+
+[mqtt]
+broker_host = "localhost"
+broker_port = 1883
+client_id = "dev-001"
+use_tls = false
+
+[ollama]
+host = "http://localhost:11434"
+model = "phi3:mini"
+timeout_secs = 10
+enabled = true
