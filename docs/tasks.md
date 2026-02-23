@@ -55,6 +55,14 @@ Test the complete command lifecycle on a single x86 machine: frontend → cloud 
 - [x] Frontend proxy wired (vite.config.ts API_URL env var, ws:true for WebSocket)
 - [x] Document local dev setup (docs/test.md — manual test guide)
 
+## Phase 7b: Frontend Display Bugs
+Found during full-loop UI testing. Not committed yet — fix and commit together.
+
+- [x] Hardware field shows `[object Object]` for custom types — fixed: `formatHardwareType()` helper in device.ts, used in DeviceCard + device detail page
+- [x] Fleet ID shows UUID instead of `"local-fleet"` on device detail page — fixed: displays `metadata.fleet` with fallback to `fleet_id`
+- [x] CommandForm fleet_id fix already applied (reads `metadata.fleet` first)
+- [x] TypeScript HardwareType updated to match Rust serde representation (string | {custom: string})
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)

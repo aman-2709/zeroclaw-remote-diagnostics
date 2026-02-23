@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DeviceSummary } from '$lib/types';
+	import { formatHardwareType } from '$lib/types/device';
 	import StatusBadge from './StatusBadge.svelte';
 
 	let { device }: { device: DeviceSummary } = $props();
@@ -14,15 +15,6 @@
 		if (hours < 24) return `${hours}h ago`;
 		return `${Math.floor(hours / 24)}d ago`;
 	});
-
-	const hwLabel: Record<string, string> = {
-		raspberry_pi_4: 'RPi 4',
-		raspberry_pi_5: 'RPi 5',
-		jetson_nano: 'Jetson Nano',
-		beaglebone: 'BeagleBone',
-		custom_sbc: 'Custom SBC',
-		unknown: 'Unknown'
-	};
 </script>
 
 <a
@@ -33,7 +25,7 @@
 		<div>
 			<h3 class="font-mono font-semibold">{device.device_id}</h3>
 			<p class="mt-1 text-sm text-text-muted">
-				{hwLabel[device.hardware_type] ?? device.hardware_type}
+				{formatHardwareType(device.hardware_type)}
 			</p>
 		</div>
 		<StatusBadge status={device.status} />
