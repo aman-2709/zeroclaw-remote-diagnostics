@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use helpers::TestHarness;
 use zc_protocol::commands::{
-    CommandEnvelope, CommandResponse, CommandStatus, InferenceTier, ParsedIntent,
+    ActionKind, CommandEnvelope, CommandResponse, CommandStatus, InferenceTier, ParsedIntent,
 };
 
 /// Sending a command to a device that doesn't exist returns 404.
@@ -61,6 +61,7 @@ async fn e2e_can_timeout_propagates() {
     // MockCanInterface has no queued responses → tool will fail/timeout.
     let mut envelope = CommandEnvelope::new("fleet-alpha", "rpi-001", "read VIN", "admin");
     envelope.parsed_intent = Some(ParsedIntent {
+        action: ActionKind::Tool,
         tool_name: "read_vin".into(),
         tool_args: json!({}),
         confidence: 0.95,
@@ -170,6 +171,7 @@ async fn e2e_unknown_tool_in_intent() {
 
     let mut envelope = CommandEnvelope::new("fleet-alpha", "rpi-001", "do magic", "admin");
     envelope.parsed_intent = Some(ParsedIntent {
+        action: ActionKind::Tool,
         tool_name: "self_destruct".into(),
         tool_args: json!({}),
         confidence: 0.99,

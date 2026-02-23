@@ -11,3 +11,4 @@ pub mod inference;
 pub mod mqtt_loop;
 pub mod registry;
 pub mod shadow_sync;
+pub mod shell;

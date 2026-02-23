@@ -11,7 +11,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use helpers::TestHarness;
 use zc_fleet_agent::executor::CommandExecutor;
 use zc_fleet_agent::inference::{OllamaClient, OllamaConfig};
-use zc_protocol::commands::{CommandEnvelope, CommandStatus, ParsedIntent};
+use zc_protocol::commands::{ActionKind, CommandEnvelope, CommandStatus, ParsedIntent};
 
 /// All 9 tools are parseable through the RuleBasedEngine via the REST API.
 #[tokio::test]
@@ -94,6 +94,7 @@ async fn e2e_pre_parsed_intent_used() {
         "admin",
     );
     envelope.parsed_intent = Some(ParsedIntent {
+        action: ActionKind::Tool,
         tool_name: "log_stats".into(),
         tool_args: json!({"path": "/var/log/syslog"}),
         confidence: 0.95,

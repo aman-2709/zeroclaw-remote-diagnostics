@@ -4,7 +4,10 @@ export type CommandStatus = 'pending' | 'sent' | 'received' | 'executing' | 'com
 
 export type InferenceTier = 'local' | 'cloud';
 
+export type ActionKind = 'tool' | 'shell' | 'reply';
+
 export interface ParsedIntent {
+	action?: ActionKind;
 	tool_name: string;
 	tool_args: Record<string, unknown>;
 	confidence: number;

@@ -77,6 +77,30 @@
 			loading = false;
 		}
 	}
+
+	function actionLabel(action?: string): string {
+		switch (action) {
+			case 'shell':
+				return 'Shell';
+			case 'reply':
+				return 'Reply';
+			case 'tool':
+			default:
+				return 'Tool';
+		}
+	}
+
+	function actionColor(action?: string): string {
+		switch (action) {
+			case 'shell':
+				return 'text-blue-400';
+			case 'reply':
+				return 'text-purple-400';
+			case 'tool':
+			default:
+				return 'text-success';
+		}
+	}
 </script>
 
 <form onsubmit={handleSubmit} class="space-y-3">
@@ -89,7 +113,7 @@
 				id="command-input"
 				type="text"
 				bind:value={command}
-				placeholder="e.g. read DTCs, check engine RPM, tail syslog"
+				placeholder="e.g. read DTCs, what's the CPU temp, how are you?"
 				disabled={loading || !deviceId}
 				class="flex-1 rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:opacity-50"
 			/>
@@ -116,10 +140,16 @@
 			{#if lastResult.parsed_intent}
 				<div class="mt-2 space-y-1 text-xs">
 					<div>
-						<span class="text-text-muted">Tool:</span>
-						<span class="font-mono font-medium">{lastResult.parsed_intent.tool_name}</span>
+						<span class="text-text-muted">Action:</span>
+						<span class="font-mono font-medium {actionColor(lastResult.parsed_intent.action)}">{actionLabel(lastResult.parsed_intent.action)}</span>
 					</div>
-					{#if Object.keys(lastResult.parsed_intent.tool_args).length > 0}
+					{#if lastResult.parsed_intent.action !== 'reply'}
+						<div>
+							<span class="text-text-muted">{lastResult.parsed_intent.action === 'shell' ? 'Command:' : 'Tool:'}</span>
+							<span class="font-mono font-medium">{lastResult.parsed_intent.tool_name}</span>
+						</div>
+					{/if}
+					{#if lastResult.parsed_intent.action !== 'shell' && lastResult.parsed_intent.action !== 'reply' && Object.keys(lastResult.parsed_intent.tool_args).length > 0}
 						<div>
 							<span class="text-text-muted">Args:</span>
 							<span class="font-mono">{JSON.stringify(lastResult.parsed_intent.tool_args)}</span>
@@ -131,7 +161,7 @@
 					</div>
 				</div>
 			{:else}
-				<p class="mt-1 text-xs text-warning">Command could not be parsed — will require cloud inference.</p>
+				<p class="mt-1 text-xs text-text-muted">Command sent to device for processing.</p>
 			{/if}
 
 			{#if awaitingResponse}
@@ -144,7 +174,7 @@
 			{#if responseText}
 				<div class="mt-2 rounded border border-success/20 bg-success/5 p-2 text-xs">
 					<span class="font-medium text-success">Response:</span>
-					<span class="ml-1">{responseText}</span>
+					<pre class="mt-1 whitespace-pre-wrap break-words font-mono text-text">{responseText}</pre>
 				</div>
 			{/if}
 
