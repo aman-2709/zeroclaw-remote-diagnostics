@@ -20,6 +20,7 @@ pub async fn run(
     interval: Duration,
     start_time: tokio::time::Instant,
     can_available: bool,
+    ollama_enabled: bool,
 ) {
     let mut ticker = time::interval(interval);
     // Skip the first tick (fires immediately).
@@ -33,7 +34,11 @@ pub async fn run(
             fleet_id: channel.fleet_id().to_string(),
             status: DeviceStatus::Online,
             uptime_secs: start_time.elapsed().as_secs(),
-            ollama_status: ServiceStatus::Unknown, // Phase 2
+            ollama_status: if ollama_enabled {
+                ServiceStatus::Running
+            } else {
+                ServiceStatus::Stopped
+            },
             can_status: if can_available {
                 ServiceStatus::Running
             } else {

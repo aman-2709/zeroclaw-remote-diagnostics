@@ -43,8 +43,8 @@ Examples:
 - "system uptime?" → {"action": "shell", "command": "uptime", "confidence": 0.95}
 - "kernel version?" → {"action": "shell", "command": "uname -a", "confidence": 0.95}
 - "list files in /tmp" → {"action": "shell", "command": "ls -la /tmp", "confidence": 0.9}
-- "show system logs" → {"action": "shell", "command": "journalctl -n 50 --no-pager", "confidence": 0.9}
 - "CPU info?" → {"action": "shell", "command": "lscpu", "confidence": 0.95}
+- "journalctl status?" → {"action": "shell", "command": "journalctl -n 20 --no-pager", "confidence": 0.9}
 
 ## Action 3: reply — Conversational response
 Use this for greetings, questions about yourself, or anything that doesn't need a tool or shell command.
@@ -60,7 +60,8 @@ Examples:
 - Respond with ONLY a JSON object (no markdown, no explanation)
 - Be generous in interpretation — operators use casual language
 - For vehicle/diagnostic queries → action: tool
-- For system/OS queries → action: shell
+- For ANY log-related queries (show logs, tail logs, search logs, system logs, syslog, recent logs) → action: tool (use tail_logs, search_logs, analyze_errors, or log_stats)
+- For system/OS queries (CPU, memory, disk, network, processes) → action: shell
 - For conversation/greetings → action: reply
 - When unsure, prefer "reply" with a helpful message over returning nothing"#;
 
@@ -98,11 +99,7 @@ fn sanitize_shell_command(cmd: &str) -> String {
     let cut = cmd
         .find("$(")
         .into_iter()
-        .chain(
-            SHELL_METACHAR_PREFIXES
-                .iter()
-                .filter_map(|&c| cmd.find(c)),
-        )
+        .chain(SHELL_METACHAR_PREFIXES.iter().filter_map(|&c| cmd.find(c)))
         .min();
     match cut {
         Some(pos) if pos > 0 => cmd[..pos].trim().to_string(),
@@ -698,18 +695,12 @@ mod tests {
 
     #[test]
     fn sanitize_strips_semicolon() {
-        assert_eq!(
-            sanitize_shell_command("ls /tmp; rm -rf /"),
-            "ls /tmp"
-        );
+        assert_eq!(sanitize_shell_command("ls /tmp; rm -rf /"), "ls /tmp");
     }
 
     #[test]
     fn sanitize_strips_redirect() {
-        assert_eq!(
-            sanitize_shell_command("echo hi > /etc/passwd"),
-            "echo hi"
-        );
+        assert_eq!(sanitize_shell_command("echo hi > /etc/passwd"), "echo hi");
     }
 
     #[test]

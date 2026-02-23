@@ -6,11 +6,23 @@ export interface HealthResponse {
 	version: string;
 }
 
+export type TelemetrySource = 'obd2' | 'system' | 'canbus';
+
+export interface TelemetryReading {
+	time: string;
+	metric_name: string;
+	value_numeric: number | null;
+	value_text: string | null;
+	value_json: unknown | null;
+	unit: string | null;
+	source: TelemetrySource;
+}
+
 export interface TelemetryResponse {
 	device_id: string;
 	source: string | null;
 	limit: number;
-	readings: unknown[];
+	readings: TelemetryReading[];
 	message?: string;
 }
 
