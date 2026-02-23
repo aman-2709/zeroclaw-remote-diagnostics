@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use super::{InferenceEngine, ParseResult};
 use zc_protocol::commands::{ActionKind, ParsedIntent};
 
-/// System prompt listing all 9 tools plus shell and reply action types.
+/// System prompt listing all 10 tools plus shell and reply action types.
 ///
 /// Embedded as a const to avoid pulling zc-canbus-tools/zc-log-tools as dependencies
 /// (which would bring in socketcan, regex, etc. into the cloud API binary).
@@ -32,6 +32,7 @@ Available tools:
 7. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
 8. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
 9. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
+10. query_journal — Query systemd journal for a service. Args: {"unit": "nginx.service", "lines": 50}
 
 Format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
 
@@ -63,6 +64,7 @@ const KNOWN_TOOLS: &[&str] = &[
     "analyze_errors",
     "log_stats",
     "tail_logs",
+    "query_journal",
 ];
 
 /// Configuration for the Bedrock inference engine.
@@ -294,7 +296,7 @@ fn extract_json(text: &str) -> &str {
     trimmed
 }
 
-/// Check if a tool name is one of our 9 known tools.
+/// Check if a tool name is one of our 10 known tools.
 fn is_known_tool(name: &str) -> bool {
     KNOWN_TOOLS.contains(&name)
 }

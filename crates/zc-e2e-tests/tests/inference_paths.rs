@@ -13,9 +13,9 @@ use zc_fleet_agent::executor::CommandExecutor;
 use zc_fleet_agent::inference::{OllamaClient, OllamaConfig};
 use zc_protocol::commands::{ActionKind, CommandEnvelope, CommandStatus, ParsedIntent};
 
-/// All 9 tools are parseable through the RuleBasedEngine via the REST API.
+/// All 10 tools are parseable through the RuleBasedEngine via the REST API.
 #[tokio::test]
-async fn e2e_all_nine_tools_parseable() {
+async fn e2e_all_ten_tools_parseable() {
     let h = TestHarness::with_sample_data();
 
     // Map of command text → expected tool_name for RuleBasedEngine patterns
@@ -29,6 +29,7 @@ async fn e2e_all_nine_tools_parseable() {
         ("analyze errors in logs", "analyze_errors"),
         ("show log stats", "log_stats"),
         ("tail logs", "tail_logs"),
+        ("show journal for nginx", "query_journal"),
     ];
 
     for (command_text, expected_tool) in &tool_commands {
@@ -103,12 +104,13 @@ async fn e2e_pre_parsed_intent_used() {
     let agent_resp = h.agent_execute(&envelope).await;
     assert_eq!(agent_resp.status, CommandStatus::Completed);
     assert!(agent_resp.response_data.is_some());
+    // Summary comes from the log_stats tool: "N entries: M errors/critical, from /var/log/syslog"
     assert!(
         agent_resp
             .response_text
             .as_ref()
             .unwrap()
-            .contains("log_stats")
+            .contains("entries")
     );
 }
 

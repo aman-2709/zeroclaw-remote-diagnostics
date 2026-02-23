@@ -2,7 +2,8 @@
 //!
 //! Provides multi-format log parsing (syslog RFC 3164/5424, systemd journald,
 //! newline-delimited JSON, plaintext), a `LogSource` abstraction for testability,
-//! and 4 analysis tools: search_logs, analyze_errors, log_stats, tail_logs.
+//! and 5 analysis tools: search_logs, analyze_errors, log_stats, tail_logs,
+//! query_journal.
 
 pub mod error;
 pub mod mock;

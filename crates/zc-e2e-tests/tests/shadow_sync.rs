@@ -20,7 +20,7 @@ async fn e2e_shadow_report_stored_and_queryable() {
         shadow_name: "diagnostics".into(),
         reported: serde_json::json!({
             "firmware": "0.1.0",
-            "tool_count": 9,
+            "tool_count": 10,
             "uptime_secs": 300
         }),
         version: 1,
@@ -46,7 +46,7 @@ async fn e2e_shadow_report_stored_and_queryable() {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["reported"]["firmware"], "0.1.0");
-    assert_eq!(json["reported"]["tool_count"], 9);
+    assert_eq!(json["reported"]["tool_count"], 10);
     assert_eq!(json["shadow_name"], "diagnostics");
 }
 

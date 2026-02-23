@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn registry_with_defaults() {
         let reg = ToolRegistry::with_defaults();
-        assert_eq!(reg.len(), 9); // 5 CAN + 4 log
+        assert_eq!(reg.len(), 10); // 5 CAN + 5 log
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
     fn list_tools_has_all() {
         let reg = ToolRegistry::with_defaults();
         let tools = reg.list_tools();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"read_pid"));
         assert!(names.contains(&"read_dtcs"));
@@ -173,6 +173,7 @@ mod tests {
         assert!(names.contains(&"analyze_errors"));
         assert!(names.contains(&"log_stats"));
         assert!(names.contains(&"tail_logs"));
+        assert!(names.contains(&"query_journal"));
     }
 
     #[tokio::test]
