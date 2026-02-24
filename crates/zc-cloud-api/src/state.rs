@@ -75,6 +75,13 @@ impl AppState {
         }
     }
 
+    /// Create state with sample devices and a custom inference engine.
+    pub fn with_sample_data_and_inference(inference: Arc<dyn InferenceEngine>) -> Self {
+        let mut state = Self::with_sample_data();
+        state.inference = inference;
+        state
+    }
+
     /// Create state with sample devices for development / tests.
     pub fn with_sample_data() -> Self {
         let mut devices = HashMap::new();

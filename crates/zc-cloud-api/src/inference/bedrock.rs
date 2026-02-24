@@ -84,7 +84,7 @@ impl BedrockConfig {
         let timeout_secs: u64 = std::env::var("BEDROCK_TIMEOUT_SECS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5);
+            .unwrap_or(15);
         Self {
             model_id,
             timeout: Duration::from_secs(timeout_secs),
@@ -249,7 +249,7 @@ impl BedrockEngine {
             action: ActionKind::Reply,
             tool_name: String::new(),
             tool_args: serde_json::json!({ "message": message }),
-            confidence: call.confidence.max(1.0),
+            confidence: 1.0,
         }))
     }
 }
