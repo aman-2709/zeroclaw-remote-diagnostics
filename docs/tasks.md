@@ -132,8 +132,17 @@ Fix response_data being lost in transit from edge agent → cloud API → WebSoc
 - [x] Update README: log tools 4→5, agent mode, shadow/telemetry endpoints, local dev setup, test count
 - [x] 393 tests passing, clippy clean, fmt clean, svelte-check clean
 
+## Phase 12: Bedrock Cloud Inference End-to-End Wiring
+Fix critical bug where Bedrock engine was silently dropped in no-DB path, improve defaults, add docs.
+
+- [x] Fix inference engine dropped in no-DB path — add `with_sample_data_and_inference()` to AppState
+- [x] Use new constructor in main.rs else branch so TieredEngine is preserved
+- [x] Add startup logging for AWS region and active inference tier
+- [x] Increase default Bedrock timeout 5s → 15s (cold starts can take 8-10s)
+- [x] Fix `validate_reply` confidence — `call.confidence.max(1.0)` was a no-op, changed to `1.0`
+- [x] Add Bedrock testing section to docs/test.md
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)
 - [ ] Deployment pipeline (Lambda handler, CI/CD)
-- [ ] Bedrock cloud inference end-to-end wiring

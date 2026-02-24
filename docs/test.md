@@ -3,7 +3,7 @@
 Test the complete command lifecycle: curl → cloud API → MQTT → fleet agent → action execution → response back.
 
 The fleet agent supports three action types (Phase 8 — Agent Mode):
-- **Tool** — routes to one of 9 diagnostic tools (5 CAN + 4 log)
+- **Tool** — routes to one of 10 diagnostic tools (5 CAN + 5 log)
 - **Shell** — runs a safe system command on the device (allowlisted, injection-blocked)
 - **Reply** — conversational response, no action taken
 
@@ -31,7 +31,7 @@ mosquitto -p 1883 -v
 # -v for verbose — you'll see every MQTT publish/subscribe
 ```
 
-### Terminal 2 — Cloud API
+### Terminal 2 — Cloud API (rule-based inference only)
 
 ```bash
 PORT=3002 \
@@ -45,6 +45,28 @@ cargo run -p zc-cloud-api
 ```
 
 Wait for: `"listening","addr":"0.0.0.0:3002"`
+
+### Terminal 2 — Cloud API (with Bedrock fallback)
+
+Add AWS credentials and `BEDROCK_ENABLED=true` to enable the tiered inference engine (rule-based → Bedrock):
+
+```bash
+BEDROCK_ENABLED=true \
+BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0 \
+AWS_ACCESS_KEY_ID=AKIA... \
+AWS_SECRET_ACCESS_KEY=... \
+AWS_DEFAULT_REGION=us-east-2 \
+PORT=3002 \
+MQTT_ENABLED=true \
+MQTT_FLEET_ID=local-fleet \
+MQTT_BROKER_HOST=localhost \
+MQTT_BROKER_PORT=1883 \
+MQTT_USE_TLS=false \
+RUST_LOG=info \
+cargo run -p zc-cloud-api
+```
+
+Wait for: `"inference engine active","inference_tier":"tiered"`
 
 ### Terminal 3 — Fleet Agent
 
@@ -82,7 +104,7 @@ Expected: 201 response with device info, `"status": "provisioning"`.
 
 ## 4. Test Tool Actions (diagnostic tools)
 
-Ollama routes these to one of the 9 registered tools.
+Ollama routes these to one of the 10 registered tools.
 
 ### 4a. Log tool (should succeed)
 
@@ -294,6 +316,92 @@ Things to verify:
 | **Shell** | "delete all files in /tmp" | fail (blocked: rm) |
 | **Reply** | "hello, what can you do?" | success (conversational) |
 | **Reply** | "how are you?" | success (conversational) |
+
+## 10. Bedrock Cloud Inference
+
+Test the Bedrock fallback path (TieredEngine: rule-based → Bedrock). Requires AWS credentials with `bedrock:InvokeModel` permission.
+
+### Prerequisites
+
+```bash
+# AWS credentials configured (SSO, env vars, or ~/.aws/credentials)
+aws sts get-caller-identity          # should return your account
+aws bedrock-runtime invoke-model \
+  --model-id us.amazon.nova-lite-v1:0 \
+  --body '{}' --query 'stop' 2>&1 | head -1
+# ^ just checking access — a validation error is fine, "AccessDenied" is not
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BEDROCK_ENABLED` | `false` | Set `true` to build TieredEngine |
+| `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID |
+| `BEDROCK_TIMEOUT_SECS` | `15` | Per-request timeout (cold starts ~8-10s) |
+| `AWS_DEFAULT_REGION` | from profile | Must support the chosen model |
+
+### Start Cloud API with Bedrock
+
+```bash
+BEDROCK_ENABLED=true \
+AWS_DEFAULT_REGION=us-east-1 \
+PORT=3002 \
+MQTT_ENABLED=true \
+MQTT_FLEET_ID=local-fleet \
+MQTT_BROKER_HOST=localhost \
+MQTT_BROKER_PORT=1883 \
+MQTT_USE_TLS=false \
+RUST_LOG=info \
+cargo run -p zc-cloud-api
+```
+
+Verify startup logs show:
+```
+"aws region resolved","region":"us-east-1"
+"inference engine active","inference_tier":"tiered"
+```
+
+Without `BEDROCK_ENABLED=true`, logs show `"inference_tier":"rule_based"`.
+
+### Test: Rule-Based Hit (no Bedrock call)
+
+```bash
+curl -s http://localhost:3002/api/v1/commands \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id": "dev-001",
+    "fleet_id": "local-fleet",
+    "command": "read the DTCs",
+    "initiated_by": "aman"
+  }' | python3 -m json.tool
+```
+
+Expected: `"inference_tier": "local"` — the rule-based engine matched, Bedrock was not called.
+
+### Test: Bedrock Fallback (ambiguous command)
+
+```bash
+curl -s http://localhost:3002/api/v1/commands \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id": "dev-001",
+    "fleet_id": "local-fleet",
+    "command": "is the powertrain healthy?",
+    "initiated_by": "aman"
+  }' | python3 -m json.tool
+```
+
+Expected: `"inference_tier": "bedrock"` — rule-based engine missed, Bedrock classified it (likely as a tool or reply action).
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `inference_tier: "rule_based"` despite BEDROCK_ENABLED | Missing env var | Ensure `BEDROCK_ENABLED=true` (not `1`) |
+| `bedrock inference timed out` | Cold start or slow network | Increase `BEDROCK_TIMEOUT_SECS=30` |
+| `bedrock converse error: AccessDenied` | IAM permissions | Add `bedrock:InvokeModel` to your role/user |
+| `bedrock converse error: ResourceNotFound` | Wrong region/model | Check `AWS_DEFAULT_REGION` supports `BEDROCK_MODEL_ID` |
 
 ## Cleanup
 

@@ -31,6 +31,11 @@ async fn main() -> anyhow::Result<()> {
         let bedrock_config = inference::bedrock::BedrockConfig::from_env();
         tracing::info!(model_id = %bedrock_config.model_id, "bedrock model configured");
         let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let region = aws_config
+            .region()
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "not set".into());
+        tracing::info!(region = %region, "aws region resolved");
         let bedrock_client = aws_sdk_bedrockruntime::Client::new(&aws_config);
         let bedrock_engine = inference::bedrock::BedrockEngine::new(bedrock_client, bedrock_config);
         let tiered = inference::tiered::TieredEngine::new(
@@ -50,8 +55,13 @@ async fn main() -> anyhow::Result<()> {
         AppState::with_pool(pool, inference)
     } else {
         tracing::warn!("DATABASE_URL not set — using in-memory state with sample data");
-        AppState::with_sample_data()
+        AppState::with_sample_data_and_inference(inference)
     };
+
+    tracing::info!(
+        inference_tier = state.inference.tier_name(),
+        "inference engine active"
+    );
 
     // Start MQTT bridge if enabled.
     if config.mqtt_enabled {

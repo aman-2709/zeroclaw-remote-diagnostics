@@ -141,25 +141,27 @@ cargo fmt --all -- --check   # check only
 Requires Mosquitto MQTT broker running on `localhost:1883`.
 
 ```bash
-# Terminal 1: Cloud API with MQTT bridge
-MQTT_ENABLED=true MQTT_FLEET_ID=local-fleet cargo run -p zc-cloud-api
+# Terminal 1: MQTT broker
+mosquitto -p 1883 -v
 
-# Terminal 2: Fleet agent (uses dev/agent.toml)
+# Terminal 2: Cloud API with MQTT bridge (rule-based inference only)
+PORT=3002 \
+MQTT_ENABLED=true \
+MQTT_FLEET_ID=local-fleet \
+MQTT_BROKER_HOST=localhost \
+MQTT_BROKER_PORT=1883 \
+MQTT_USE_TLS=false \
+RUST_LOG=info \
+cargo run -p zc-cloud-api
+
+# Terminal 3: Fleet agent
 RUST_LOG=info cargo run -p zc-fleet-agent -- dev/agent.toml
 
-# Terminal 3: Frontend dev server
-cd frontend && pnpm install && pnpm dev
+# Terminal 4: Frontend dev server
+cd frontend && pnpm install && pnpm dev -- --port 5174
 ```
 
-If running the cloud API on a non-default port:
-
-```bash
-# Terminal 1
-PORT=3002 MQTT_ENABLED=true MQTT_FLEET_ID=local-fleet cargo run -p zc-cloud-api
-
-# Terminal 3 — must match
-cd frontend && API_URL=http://localhost:3002 pnpm dev
-```
+To add Bedrock cloud inference fallback, add `BEDROCK_ENABLED=true` plus AWS credentials to Terminal 2 (see [Bedrock Cloud Inference](#bedrock-cloud-inference) above).
 
 ### Run the Cloud API
 
@@ -169,9 +171,44 @@ cargo run -p zc-cloud-api
 
 # With PostgreSQL
 DATABASE_URL=postgres://user:pass@localhost/zeroclaw cargo run -p zc-cloud-api
+```
 
-# With Bedrock inference enabled
-BEDROCK_ENABLED=true AWS_REGION=us-east-1 cargo run -p zc-cloud-api
+### Bedrock Cloud Inference
+
+The cloud API supports a tiered inference engine: rule-based (local, ~80% hit rate) with AWS Bedrock fallback for ambiguous commands. Requires AWS credentials with `bedrock:InvokeModel` permission and model access enabled in the Bedrock console.
+
+```bash
+# Cloud API with Bedrock + MQTT (full stack, no database)
+BEDROCK_ENABLED=true \
+BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0 \
+AWS_ACCESS_KEY_ID=AKIA... \
+AWS_SECRET_ACCESS_KEY=... \
+AWS_DEFAULT_REGION=us-east-2 \
+PORT=3002 \
+MQTT_ENABLED=true \
+MQTT_FLEET_ID=local-fleet \
+MQTT_BROKER_HOST=localhost \
+MQTT_BROKER_PORT=1883 \
+MQTT_USE_TLS=false \
+RUST_LOG=info \
+cargo run -p zc-cloud-api
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BEDROCK_ENABLED` | `false` | Enable tiered inference (rule-based + Bedrock) |
+| `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID |
+| `BEDROCK_TIMEOUT_SECS` | `15` | Per-request timeout (cold starts can take 8-10s) |
+| `AWS_ACCESS_KEY_ID` | from profile | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | from profile | AWS secret key |
+| `AWS_DEFAULT_REGION` | from profile | AWS region (must support chosen model) |
+
+Startup logs confirm the active engine:
+```
+"inference engine active","inference_tier":"tiered"    # Bedrock enabled
+"inference engine active","inference_tier":"local"     # Rule-based only
 ```
 
 ### Run the Frontend
