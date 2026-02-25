@@ -332,6 +332,141 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // Machine ID
+    if matches_any(lower, &["machine id", "machine-id", "device id", "device identifier"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "cat /etc/machine-id".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // DMI / board product info (x86 / UEFI systems)
+    if matches_any(
+        lower,
+        &[
+            "product name",
+            "board name",
+            "board vendor",
+            "board info",
+            "dmi info",
+            "hardware model",
+            "product model",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "cat /sys/class/dmi/id/product_name".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // ARM device model (Raspberry Pi, BeagleBone, Jetson, etc.)
+    if matches_any(
+        lower,
+        &[
+            "device model",
+            "board model",
+            "what board",
+            "device tree model",
+            "arm model",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "cat /proc/device-tree/model".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // WiFi signal strength / wireless info
+    if matches_any(
+        lower,
+        &[
+            "wifi signal",
+            "wireless signal",
+            "signal strength",
+            "wifi strength",
+            "wifi info",
+            "wireless info",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "iw dev".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // Network latency
+    if matches_any(
+        lower,
+        &[
+            "network latency",
+            "ping latency",
+            "internet latency",
+            "ping test",
+            "latency test",
+            "check latency",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ping -c 3 8.8.8.8".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // GPS location / coordinates
+    if matches_any(
+        lower,
+        &[
+            "gps location",
+            "gps coordinate",
+            "where is the device",
+            "where is this device",
+            "device location",
+            "current location",
+            "coordinates",
+            "latitude",
+            "longitude",
+            "gps fix",
+            "where am i",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "gpspipe -w -n 3".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // CAN interface details (bitrate, state)
+    if matches_any(
+        lower,
+        &[
+            "can interface",
+            "can state",
+            "can status",
+            "can details",
+            "can bitrate",
+            "can bus state",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ip -details link show".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
     None
 }
 
@@ -795,5 +930,117 @@ mod tests {
         let intent = parse("show cpu info").unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
         assert_eq!(intent.tool_name, "lscpu");
+    }
+
+    #[test]
+    fn parse_machine_id() {
+        let intent = parse("what is the machine id?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /etc/machine-id");
+    }
+
+    #[test]
+    fn parse_device_identifier() {
+        let intent = parse("show the device identifier").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /etc/machine-id");
+    }
+
+    #[test]
+    fn parse_dmi_product_name() {
+        let intent = parse("what is the product name?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /sys/class/dmi/id/product_name");
+    }
+
+    #[test]
+    fn parse_board_vendor() {
+        let intent = parse("show board vendor").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /sys/class/dmi/id/product_name");
+    }
+
+    #[test]
+    fn parse_hardware_model() {
+        let intent = parse("what hardware model is this?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /sys/class/dmi/id/product_name");
+    }
+
+    #[test]
+    fn parse_arm_device_model() {
+        let intent = parse("what device model is this board?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /proc/device-tree/model");
+    }
+
+    #[test]
+    fn parse_device_tree_model() {
+        let intent = parse("show device tree model").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /proc/device-tree/model");
+    }
+
+    #[test]
+    fn parse_wifi_signal() {
+        let intent = parse("what is the wifi signal strength?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "iw dev");
+    }
+
+    #[test]
+    fn parse_wireless_info() {
+        let intent = parse("show wireless info").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "iw dev");
+    }
+
+    #[test]
+    fn parse_network_latency() {
+        let intent = parse("check network latency").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ping -c 3 8.8.8.8");
+    }
+
+    #[test]
+    fn parse_ping_test() {
+        let intent = parse("run a ping test").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ping -c 3 8.8.8.8");
+    }
+
+    #[test]
+    fn parse_gps_location() {
+        let intent = parse("what is the gps location?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "gpspipe -w -n 3");
+    }
+
+    #[test]
+    fn parse_where_is_device() {
+        let intent = parse("where is the device?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "gpspipe -w -n 3");
+    }
+
+    #[test]
+    fn parse_coordinates() {
+        let intent = parse("show coordinates").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "gpspipe -w -n 3");
+    }
+
+    #[test]
+    fn parse_can_interface_state() {
+        let intent = parse("show CAN interface state").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ip -details link show");
+    }
+
+    #[test]
+    fn parse_can_bitrate() {
+        let intent = parse("what is the CAN bitrate?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ip -details link show");
     }
 }

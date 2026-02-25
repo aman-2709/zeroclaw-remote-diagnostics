@@ -45,6 +45,11 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "vcgencmd",
     "top",
     "whoami",
+    // Hardware detail commands (read-only; restricted below)
+    "ping",     // network latency measurement
+    "iw",       // WiFi interface info and signal strength
+    "ethtool",  // Ethernet link speed and interface details
+    "gpspipe",  // GPS location via gpsd daemon
 ];
 
 /// Commands explicitly blocked (dangerous even if somehow reached).
@@ -152,6 +157,39 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
             }
             None => {
                 // bare "systemctl" is fine (lists units)
+            }
+        }
+    }
+
+    // Restrict ping: block flood mode (-f / --flood)
+    if program == "ping" {
+        if args.iter().any(|a| a == "-f" || a == "--flood") {
+            return Err(ShellError::NotAllowed(
+                "ping -f (flood ping not allowed)".into(),
+            ));
+        }
+    }
+
+    // Restrict iw: block write operations (set, connect, disconnect, del, add, new, mesh)
+    if program == "iw" {
+        const BLOCKED_IW: &[&str] = &[
+            "set", "connect", "disconnect", "del", "add", "new", "mesh",
+        ];
+        if args.iter().any(|a| BLOCKED_IW.contains(&a.as_str())) {
+            return Err(ShellError::NotAllowed(
+                "iw write operations not allowed".into(),
+            ));
+        }
+    }
+
+    // Restrict ethtool: block write flags (-s / --change / --reset / --set-*)
+    if program == "ethtool" {
+        const BLOCKED_ETHTOOL: &[&str] = &["-s", "--change", "--reset", "-r"];
+        for arg in args {
+            if BLOCKED_ETHTOOL.contains(&arg.as_str()) || arg.starts_with("--set-") {
+                return Err(ShellError::NotAllowed(format!(
+                    "ethtool write operation not allowed: {arg}"
+                )));
             }
         }
     }
@@ -347,5 +385,106 @@ mod tests {
     async fn free_with_human_readable_succeeds() {
         let result = execute("free -h").await;
         assert!(result.is_ok());
+    }
+
+    // ── ping tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn ping_loopback_succeeds() {
+        let result = execute("ping -c 1 127.0.0.1").await;
+        assert!(result.is_ok(), "ping loopback should be allowed: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn ping_flood_blocked() {
+        let result = execute("ping -f 127.0.0.1").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn ping_flood_long_blocked() {
+        let result = execute("ping --flood 127.0.0.1").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    // ── iw tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn iw_list_allowed() {
+        // May fail if iw not installed, but must not be rejected by the allowlist
+        let result = execute("iw list").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn iw_set_blocked() {
+        let result = execute("iw dev wlan0 set bitrates").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn iw_connect_blocked() {
+        let result = execute("iw dev wlan0 connect MyNetwork").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn iw_disconnect_blocked() {
+        let result = execute("iw dev wlan0 disconnect").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    // ── gpspipe tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn gpspipe_allowed() {
+        // May fail if gpsd is not running, but must not be rejected by validation
+        let result = execute("gpspipe -w -n 3").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) | Err(ShellError::Timeout(_)) => {}
+            other => panic!("expected Ok, Exec, or Timeout error, got: {other:?}"),
+        }
+    }
+
+    // ── ethtool tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn ethtool_read_allowed() {
+        // May fail if ethtool not installed or interface absent — must not be rejected by validation
+        let result = execute("ethtool eth0").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ethtool_write_s_blocked() {
+        let result = execute("ethtool -s eth0 speed 100").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn ethtool_write_change_blocked() {
+        let result = execute("ethtool --change eth0 speed 100").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn ethtool_write_set_prefix_blocked() {
+        let result = execute("ethtool --set-pause eth0 autoneg on").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn ethtool_reset_blocked() {
+        let result = execute("ethtool --reset eth0").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
     }
 }
