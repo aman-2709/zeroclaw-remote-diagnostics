@@ -31,12 +31,16 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 ### Layer 3 — Frontend
 - Web UI: fleet dashboard, device selection, natural-language command interface, real-time response display, audit trail
 
-## Hybrid Inference Strategy
+## Inference Strategy
 
-| Tier | Engine | Handles | Latency | Cost |
-|------|--------|---------|---------|------|
-| Tier 1 | Ollama (local) | Structured commands, known patterns, health checks, log filtering | <100 ms | $0 |
-| Tier 2 | Bedrock (cloud) | Complex reasoning, anomaly detection, root-cause analysis | 200–1500 ms | $0.001–$0.015/query |
+Cloud API uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
+
+| Engine | Env Value | Handles | Latency | Cost |
+|--------|-----------|---------|---------|------|
+| Rule-based (local) | `local` (default) | Pattern matching for 10 tools + 10 shell commands, ~80% coverage | <1 ms | $0 |
+| Bedrock (cloud) | `bedrock` | Complex/ambiguous queries via AWS Converse API | 200–1500 ms | $0.001–$0.015/query |
+
+Edge agent also runs Ollama (local LLM) for commands that arrive without a pre-parsed intent.
 
 ## PoC Scope
 - 10–50 ARM devices (Raspberry Pi 4/5 or industrial SBCs) with CAN bus adapters

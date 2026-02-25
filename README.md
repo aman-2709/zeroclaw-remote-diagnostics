@@ -31,14 +31,16 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 | **Cloud** | Rust (Axum), PostgreSQL, AWS IoT Core, AWS Bedrock | Command routing, NL inference fallback, device registry, telemetry |
 | **Frontend** | SvelteKit 5, Tailwind CSS 4 | Fleet dashboard, device management, real-time command interface |
 
-### Hybrid Inference Strategy
+### Inference Strategy
 
-| Tier | Engine | Handles | Latency | Cost |
-|------|--------|---------|---------|------|
-| Tier 1 | Rule-based (local) | Structured commands, known patterns (~80% of queries) | <1 ms | $0 |
-| Tier 2 | AWS Bedrock (cloud) | Complex reasoning, ambiguous commands | 200-1500 ms | ~$0.001/query |
+The cloud API uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
 
-The `TieredEngine` tries local inference first, falls back to Bedrock only when local parsing returns no result.
+| Engine | Env Value | Handles | Latency | Cost |
+|--------|-----------|---------|---------|------|
+| Rule-based (local) | `local` (default) | Pattern matching for 10 tools + 10 shell commands, ~80% coverage | <1 ms | $0 |
+| Bedrock (cloud) | `bedrock` | Complex/ambiguous queries via AWS Converse API | 200–1500 ms | ~$0.001/query |
+
+Edge agent also runs Ollama (local LLM) for commands that arrive without a pre-parsed intent.
 
 ## Project Structure
 
@@ -46,7 +48,7 @@ The `TieredEngine` tries local inference first, falls back to Bedrock only when 
 crates/
   zc-protocol/        Shared types: commands, telemetry, device, DTC, shadows, topics
   zc-canbus-tools/    CAN bus / OBD-II diagnostic tools (5 tools, trait-based)
-  zc-log-tools/       Multi-format log parsing + 4 analysis tools
+  zc-log-tools/       Multi-format log parsing + 5 analysis tools
   zc-mqtt-channel/    MQTT channel abstraction for AWS IoT Core (mTLS)
   zc-fleet-agent/     Edge agent binary (wires all crates + MQTT event loop)
   zc-cloud-api/       Cloud API server (Axum REST, PostgreSQL/SQLx, WebSocket)
@@ -105,7 +107,7 @@ Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JS
 ### WebSocket Events
 
 - `command_dispatched` — new command sent to device
-- `command_response` — device response received (includes `response_data`)
+- `command_response` — device response received (includes `response_data`, `error`)
 - `device_heartbeat` — device heartbeat received
 - `device_status_changed` — device status transition
 - `telemetry_ingested` — telemetry batch received
@@ -125,7 +127,7 @@ Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JS
 # Build all crates
 cargo build --workspace
 
-# Run all tests (393 tests, no external dependencies required)
+# Run all tests (402 tests, no external dependencies required)
 cargo test --workspace
 
 # Lint
@@ -144,7 +146,8 @@ Requires Mosquitto MQTT broker running on `localhost:1883`.
 # Terminal 1: MQTT broker
 mosquitto -p 1883 -v
 
-# Terminal 2: Cloud API with MQTT bridge (rule-based inference only)
+# Terminal 2: Cloud API with MQTT bridge (rule-based inference)
+INFERENCE_ENGINE=local \
 PORT=3002 \
 MQTT_ENABLED=true \
 MQTT_FLEET_ID=local-fleet \
@@ -161,7 +164,7 @@ RUST_LOG=info cargo run -p zc-fleet-agent -- dev/agent.toml
 cd frontend && pnpm install && pnpm dev -- --port 5174
 ```
 
-To add Bedrock cloud inference fallback, add `BEDROCK_ENABLED=true` plus AWS credentials to Terminal 2 (see [Bedrock Cloud Inference](#bedrock-cloud-inference) above).
+To use Bedrock cloud inference instead, set `INFERENCE_ENGINE=bedrock` plus AWS credentials in Terminal 2 (see [Bedrock Cloud Inference](#bedrock-cloud-inference) below).
 
 ### Run the Cloud API
 
@@ -175,11 +178,11 @@ DATABASE_URL=postgres://user:pass@localhost/zeroclaw cargo run -p zc-cloud-api
 
 ### Bedrock Cloud Inference
 
-The cloud API supports a tiered inference engine: rule-based (local, ~80% hit rate) with AWS Bedrock fallback for ambiguous commands. Requires AWS credentials with `bedrock:InvokeModel` permission and model access enabled in the Bedrock console.
+To use AWS Bedrock instead of the local rule-based engine, set `INFERENCE_ENGINE=bedrock`. Requires AWS credentials with `bedrock:InvokeModel` permission and model access enabled in the Bedrock console.
 
 ```bash
 # Cloud API with Bedrock + MQTT (full stack, no database)
-BEDROCK_ENABLED=true \
+INFERENCE_ENGINE=bedrock \
 BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0 \
 AWS_ACCESS_KEY_ID=AKIA... \
 AWS_SECRET_ACCESS_KEY=... \
@@ -198,8 +201,8 @@ cargo run -p zc-cloud-api
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BEDROCK_ENABLED` | `false` | Enable tiered inference (rule-based + Bedrock) |
-| `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID |
+| `INFERENCE_ENGINE` | `local` | Inference engine: `local` (rule-based) or `bedrock` (cloud LLM) |
+| `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID (only when `INFERENCE_ENGINE=bedrock`) |
 | `BEDROCK_TIMEOUT_SECS` | `15` | Per-request timeout (cold starts can take 8-10s) |
 | `AWS_ACCESS_KEY_ID` | from profile | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | from profile | AWS secret key |
@@ -207,8 +210,8 @@ cargo run -p zc-cloud-api
 
 Startup logs confirm the active engine:
 ```
-"inference engine active","inference_tier":"tiered"    # Bedrock enabled
-"inference engine active","inference_tier":"local"     # Rule-based only
+"inference engine: bedrock (cloud LLM)"    # INFERENCE_ENGINE=bedrock
+"inference engine: local (rule-based)"     # INFERENCE_ENGINE=local (default)
 ```
 
 ### Run the Frontend

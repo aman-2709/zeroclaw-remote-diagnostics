@@ -44,13 +44,13 @@
 		if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 	}
 
-	function handleResponse(text: string | null, data: unknown | null, status: string) {
+	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null) {
 		cleanup();
 		awaitingResponse = false;
 		responseText = text;
 		responseData = data;
 		if (status === 'failed') {
-			responseError = 'Command execution failed on device';
+			responseError = errMsg || 'Command execution failed on device';
 		}
 	}
 
@@ -72,7 +72,7 @@
 		// Strategy 1: WebSocket push (instant)
 		unsub = wsStore.onEvent((event: WsEvent) => {
 			if (event.type === 'command_response' && event.command_id === commandId) {
-				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status);
+				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null);
 			}
 		});
 
@@ -93,14 +93,15 @@
 				const obj = raw as Record<string, unknown>;
 
 				// In-memory: { command, response: { status, ... }, created_at }
-				// DB mode:   { id, status, response_text, response_data, ... }
+				// DB mode:   { id, status, response_text, response_data, error, ... }
 				const resp = obj.response as Record<string, unknown> | undefined;
 				const status = (resp?.status ?? obj.status) as string | undefined;
 				const text = (resp?.response_text ?? obj.response_text) as string | null;
 				const data = (resp?.response_data ?? obj.response_data) as unknown | null;
+				const errMsg = (resp?.error ?? obj.error) as string | null;
 
 				if (status && status !== 'pending' && status !== 'sent' && status !== 'received' && status !== 'executing') {
-					handleResponse(text ?? null, data ?? null, status);
+					handleResponse(text ?? null, data ?? null, status, errMsg ?? null);
 				}
 			} catch {
 				// Poll failed — will retry next interval

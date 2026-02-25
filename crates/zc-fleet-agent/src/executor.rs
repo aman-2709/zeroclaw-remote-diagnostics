@@ -14,7 +14,7 @@ use zc_protocol::commands::{
     ActionKind, CommandEnvelope, CommandResponse, CommandStatus, InferenceTier, ParsedIntent,
 };
 
-use crate::inference::OllamaClient;
+use crate::inference::{OllamaClient, sanitize_shell_command};
 use crate::registry::{ToolKind, ToolRegistry};
 use crate::shell;
 
@@ -154,6 +154,9 @@ impl<'a> CommandExecutor<'a> {
     }
 
     /// Execute a shell action via the safe shell executor.
+    ///
+    /// Sanitizes commands before execution as defense-in-depth — cloud inference
+    /// may generate piped commands that the shell executor would reject.
     async fn execute_shell(
         &self,
         envelope: &CommandEnvelope,
@@ -161,9 +164,33 @@ impl<'a> CommandExecutor<'a> {
         tier: InferenceTier,
         start: Instant,
     ) -> CommandResponse {
-        let command_str = &intent.tool_name;
+        // Sanitize: strip everything from first shell metacharacter onward.
+        // Cloud/Bedrock inference may produce piped commands; we only run the base command.
+        let command_str = sanitize_shell_command(&intent.tool_name);
+        if command_str.is_empty() {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            return CommandResponse {
+                command_id: envelope.id,
+                correlation_id: envelope.correlation_id,
+                device_id: envelope.device_id.clone(),
+                status: CommandStatus::Failed,
+                inference_tier: tier,
+                response_text: None,
+                response_data: None,
+                latency_ms,
+                responded_at: Utc::now(),
+                error: Some("shell: command was empty after sanitization".into()),
+            };
+        }
+        if command_str != intent.tool_name {
+            tracing::info!(
+                original = %intent.tool_name,
+                sanitized = %command_str,
+                "executor sanitized shell command from cloud intent"
+            );
+        }
 
-        match shell::execute(command_str).await {
+        match shell::execute(&command_str).await {
             Ok(result) => {
                 let mut output = result.stdout;
                 if !result.stderr.is_empty() {

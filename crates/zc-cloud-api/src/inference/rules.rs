@@ -230,6 +230,108 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // ── Shell commands (system info queries) ─────────────────
+
+    // IP address / network
+    if matches_any(lower, &["ip address", "ip addr", "network interface", "network info"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ip -brief addr".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // CPU temperature
+    if matches_any(lower, &["cpu temp", "cpu temperature", "processor temp"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "cat /sys/class/thermal/thermal_zone0/temp".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // GPU temperature (Raspberry Pi)
+    if matches_any(lower, &["gpu temp", "gpu temperature"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "vcgencmd measure_temp".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // Disk space
+    if matches_any(lower, &["disk space", "disk usage", "storage", "free space"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "df -h".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
+    // Memory usage
+    if matches_any(lower, &["memory", "ram", "free mem"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "free -h".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // Uptime
+    if lower.contains("uptime") {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "uptime".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
+    // Kernel version
+    if matches_any(lower, &["kernel version", "kernel", "uname"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "uname -a".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
+    // CPU info
+    if matches_any(lower, &["cpu info", "processor info", "lscpu"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "lscpu".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // Running processes
+    if matches_any(lower, &["process", "running process", "what's running"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ps aux".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // Hostname
+    if lower.contains("hostname") {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "hostname".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
     None
 }
 
@@ -628,5 +730,70 @@ mod tests {
     #[test]
     fn extract_service_none() {
         assert_eq!(extract_service_name("show systemd logs"), None);
+    }
+
+    // ── Shell command tests ──────────────────────────────────────
+
+    #[test]
+    fn parse_ip_address() {
+        let intent = parse("whats the ip address of this machine?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ip -brief addr");
+    }
+
+    #[test]
+    fn parse_cpu_temperature() {
+        let intent = parse("whats the cpu temperature?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "cat /sys/class/thermal/thermal_zone0/temp");
+    }
+
+    #[test]
+    fn parse_gpu_temperature() {
+        let intent = parse("whats the gpu temperature?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "vcgencmd measure_temp");
+    }
+
+    #[test]
+    fn parse_disk_space() {
+        let intent = parse("how much disk space is left?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "df -h");
+    }
+
+    #[test]
+    fn parse_memory_usage() {
+        let intent = parse("show memory usage").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "free -h");
+    }
+
+    #[test]
+    fn parse_uptime() {
+        let intent = parse("whats the uptime?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "uptime");
+    }
+
+    #[test]
+    fn parse_kernel_version() {
+        let intent = parse("whats the kernel version?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "uname -a");
+    }
+
+    #[test]
+    fn parse_hostname() {
+        let intent = parse("whats the hostname?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "hostname");
+    }
+
+    #[test]
+    fn parse_cpu_info() {
+        let intent = parse("show cpu info").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "lscpu");
     }
 }

@@ -142,6 +142,22 @@ Fix critical bug where Bedrock engine was silently dropped in no-DB path, improv
 - [x] Fix `validate_reply` confidence — `call.confidence.max(1.0)` was a no-op, changed to `1.0`
 - [x] Add Bedrock testing section to docs/test.md
 
+## Phase 13: Shell Command Fixes + Inference Engine Separation
+Fix shell commands failing due to pipe injection and missing binaries, show real errors in frontend, and separate inference engines into clean either/or config.
+
+- [x] Add shell command patterns to cloud-side RuleBasedEngine (ip addr, cpu temp, gpu temp, disk, memory, uptime, kernel, cpu info, processes, hostname)
+- [x] Add no-pipes rule + shell examples to Bedrock system prompt
+- [x] Add defense-in-depth shell sanitization in edge executor (strips metacharacters from cloud intents)
+- [x] Make `sanitize_shell_command` public in inference.rs for executor reuse
+- [x] Add `error` field to `WsEvent::CommandResponse` (events.rs, mqtt_bridge.rs, responses.rs)
+- [x] Add `error` field to frontend WsEvent type (types/index.ts)
+- [x] Update CommandForm to show actual device error message instead of generic text
+- [x] Replace `BEDROCK_ENABLED` boolean with `INFERENCE_ENGINE=local|bedrock` env var (either/or, no cascade)
+- [x] Remove TieredEngine from main.rs pipeline (module kept for future use)
+- [x] 9 new shell command tests in RuleBasedEngine
+- [x] 402 tests passing (up from 393), clippy clean, fmt clean, svelte-check clean
+- [x] E2E verified: ip address, cpu temp, disk space, memory, kernel version, system logs all working
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)

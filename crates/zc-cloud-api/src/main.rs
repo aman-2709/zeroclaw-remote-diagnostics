@@ -25,27 +25,34 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ApiConfig::from_env();
 
-    // Build the inference engine (rule-based, or tiered with Bedrock fallback).
-    let inference: Arc<dyn InferenceEngine> = if config.bedrock_enabled {
-        tracing::info!("bedrock inference enabled — building tiered engine");
-        let bedrock_config = inference::bedrock::BedrockConfig::from_env();
-        tracing::info!(model_id = %bedrock_config.model_id, "bedrock model configured");
-        let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let region = aws_config
-            .region()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| "not set".into());
-        tracing::info!(region = %region, "aws region resolved");
-        let bedrock_client = aws_sdk_bedrockruntime::Client::new(&aws_config);
-        let bedrock_engine = inference::bedrock::BedrockEngine::new(bedrock_client, bedrock_config);
-        let tiered = inference::tiered::TieredEngine::new(
-            Box::new(inference::RuleBasedEngine::new()),
-            Box::new(bedrock_engine),
-        );
-        Arc::new(tiered)
-    } else {
-        tracing::info!("bedrock inference disabled — using rule-based engine only");
-        Arc::new(inference::RuleBasedEngine::new())
+    // Build the inference engine — either local (rule-based) or bedrock (cloud LLM).
+    let inference: Arc<dyn InferenceEngine> = match config.inference_engine.as_str() {
+        "bedrock" => {
+            tracing::info!("inference engine: bedrock (cloud LLM)");
+            let bedrock_config = inference::bedrock::BedrockConfig::from_env();
+            tracing::info!(model_id = %bedrock_config.model_id, "bedrock model configured");
+            let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let region = aws_config
+                .region()
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "not set".into());
+            tracing::info!(region = %region, "aws region resolved");
+            let bedrock_client = aws_sdk_bedrockruntime::Client::new(&aws_config);
+            Arc::new(inference::bedrock::BedrockEngine::new(
+                bedrock_client,
+                bedrock_config,
+            ))
+        }
+        other => {
+            if other != "local" {
+                tracing::warn!(
+                    engine = %other,
+                    "unknown INFERENCE_ENGINE value, defaulting to local"
+                );
+            }
+            tracing::info!("inference engine: local (rule-based)");
+            Arc::new(inference::RuleBasedEngine::new())
+        }
     };
 
     // Connect to PostgreSQL if DATABASE_URL is set, otherwise use in-memory state.
