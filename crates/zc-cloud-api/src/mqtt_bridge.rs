@@ -138,6 +138,7 @@ async fn handle_command_response(payload: &[u8], state: &AppState) {
         inference_tier: inference_tier_str,
         response_text: resp.response_text,
         response_data: resp.response_data,
+        error: resp.error,
         latency_ms: Some(resp.latency_ms as i64),
         responded_at: Utc::now(),
     });

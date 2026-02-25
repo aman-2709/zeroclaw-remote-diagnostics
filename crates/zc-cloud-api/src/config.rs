@@ -18,9 +18,10 @@ pub struct ApiConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub cors_origins: Vec<String>,
-    /// Enable AWS Bedrock cloud inference fallback (BEDROCK_ENABLED env var).
-    #[serde(default)]
-    pub bedrock_enabled: bool,
+    /// Inference engine selection: "local" (rule-based) or "bedrock" (cloud LLM).
+    /// Set via INFERENCE_ENGINE env var. Defaults to "local".
+    #[serde(default = "default_inference_engine")]
+    pub inference_engine: String,
     /// Enable MQTT bridge (MQTT_ENABLED env var).
     #[serde(default)]
     pub mqtt_enabled: bool,
@@ -52,6 +53,10 @@ fn default_port() -> u16 {
     3000
 }
 
+fn default_inference_engine() -> String {
+    "local".to_string()
+}
+
 fn default_mqtt_host() -> String {
     "localhost".to_string()
 }
@@ -75,7 +80,8 @@ impl ApiConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_port()),
-            bedrock_enabled: env_bool("BEDROCK_ENABLED"),
+            inference_engine: std::env::var("INFERENCE_ENGINE")
+                .unwrap_or_else(|_| default_inference_engine()),
             mqtt_enabled: env_bool("MQTT_ENABLED"),
             mqtt_broker_host: std::env::var("MQTT_BROKER_HOST")
                 .unwrap_or_else(|_| default_mqtt_host()),
@@ -100,7 +106,7 @@ impl Default for ApiConfig {
             port: default_port(),
             database_url: None,
             cors_origins: vec![],
-            bedrock_enabled: false,
+            inference_engine: default_inference_engine(),
             mqtt_enabled: false,
             mqtt_broker_host: default_mqtt_host(),
             mqtt_broker_port: default_mqtt_port(),
@@ -123,7 +129,7 @@ mod tests {
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 3000);
         assert!(config.database_url.is_none());
-        assert!(!config.bedrock_enabled);
+        assert_eq!(config.inference_engine, "local");
         assert!(!config.mqtt_enabled);
         assert_eq!(config.mqtt_broker_host, "localhost");
         assert_eq!(config.mqtt_broker_port, 1883);

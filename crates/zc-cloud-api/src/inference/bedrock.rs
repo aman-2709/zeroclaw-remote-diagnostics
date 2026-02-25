@@ -39,7 +39,19 @@ Format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confid
 ## Action 2: shell — Run a system command on the device
 For system info queries (CPU temp, disk space, memory, network, uptime, etc.).
 
-Format: {"action": "shell", "command": "<shell command>", "confidence": <0.0-1.0>}
+IMPORTANT: Use simple single commands only. Do NOT use pipes (|), semicolons (;), redirects (> <), backticks, $(), or && — these are blocked by the device security layer. Use command flags instead.
+
+Examples:
+- CPU temperature → {"action": "shell", "command": "cat /sys/class/thermal/thermal_zone0/temp", "confidence": 0.9}
+- disk space → {"action": "shell", "command": "df -h", "confidence": 0.95}
+- memory → {"action": "shell", "command": "free -h", "confidence": 0.95}
+- network interfaces → {"action": "shell", "command": "ip -brief addr", "confidence": 0.9}
+- uptime → {"action": "shell", "command": "uptime", "confidence": 0.95}
+- kernel version → {"action": "shell", "command": "uname -a", "confidence": 0.95}
+- processes → {"action": "shell", "command": "ps aux", "confidence": 0.9}
+- CPU info → {"action": "shell", "command": "lscpu", "confidence": 0.95}
+
+Format: {"action": "shell", "command": "<single command with flags>", "confidence": <0.0-1.0>}
 
 ## Action 3: reply — Conversational response
 For greetings, questions about capabilities, or non-actionable queries.

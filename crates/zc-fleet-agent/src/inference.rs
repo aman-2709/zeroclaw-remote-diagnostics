@@ -96,7 +96,9 @@ const MIN_CONFIDENCE: f64 = 0.3;
 /// Strip everything from the first shell metacharacter onward.
 /// LLMs (especially small ones like phi3) often add pipes despite instructions.
 /// Since we use `tokio::process::Command` (no shell), pipes don't work anyway.
-fn sanitize_shell_command(cmd: &str) -> String {
+///
+/// Also used by the executor as defense-in-depth for commands from cloud inference.
+pub fn sanitize_shell_command(cmd: &str) -> String {
     let cmd = cmd.trim();
     // Find the earliest metacharacter position
     let cut = cmd

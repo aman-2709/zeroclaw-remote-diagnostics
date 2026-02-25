@@ -75,6 +75,7 @@ pub async fn ingest_response(
         inference_tier: inference_tier_str,
         response_text: resp.response_text.clone(),
         response_data: resp.response_data.clone(),
+        error: resp.error.clone(),
         latency_ms: Some(resp.latency_ms as i64),
         responded_at: Utc::now(),
     });
