@@ -88,27 +88,34 @@ pub async fn update_heartbeat(
 ///
 /// Uses INSERT ... ON CONFLICT so that new devices are created automatically
 /// when they first connect, while existing devices just get their heartbeat
-/// and status updated.
+/// and status updated. The `machine_id` (from `/etc/machine-id`) is stored
+/// in the metadata JSON for hardware fingerprinting.
 pub async fn upsert_from_heartbeat(
     pool: &PgPool,
     device_id: &str,
     fleet_id: &str,
+    machine_id: Option<&str>,
     heartbeat_at: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
     let now = Utc::now();
+    let mut metadata = serde_json::json!({ "fleet": fleet_id, "auto_registered": true });
+    if let Some(mid) = machine_id {
+        metadata["machine_id"] = serde_json::Value::String(mid.to_string());
+    }
     sqlx::query(
         "INSERT INTO devices (id, fleet_id, device_id, status, hardware_type, last_heartbeat, metadata, created_at, updated_at)
          VALUES ($1, $2, $3, 'online', 'auto', $4, $5, $6, $6)
          ON CONFLICT (device_id) DO UPDATE
          SET last_heartbeat = EXCLUDED.last_heartbeat,
              status = 'online',
+             metadata = EXCLUDED.metadata,
              updated_at = now()",
     )
     .bind(Uuid::now_v7())
     .bind(Uuid::now_v7()) // fleet_id as UUID — placeholder for string fleet names
     .bind(device_id)
     .bind(heartbeat_at)
-    .bind(serde_json::json!({ "fleet": fleet_id, "auto_registered": true }))
+    .bind(metadata)
     .bind(now)
     .execute(pool)
     .await?;

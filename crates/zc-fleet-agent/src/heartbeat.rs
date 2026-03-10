@@ -11,6 +11,14 @@ use tokio::time;
 use zc_mqtt_channel::MqttChannel;
 use zc_protocol::device::{DeviceStatus, Heartbeat, ServiceStatus};
 
+/// Read `/etc/machine-id` once at startup. Returns `None` if unavailable.
+fn read_machine_id() -> Option<String> {
+    std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Run the heartbeat loop, publishing at `interval`.
 ///
 /// This function runs forever until the task is cancelled. Intended
@@ -22,6 +30,13 @@ pub async fn run(
     can_available: bool,
     ollama_enabled: bool,
 ) {
+    let machine_id = read_machine_id();
+    if let Some(ref mid) = machine_id {
+        tracing::info!(machine_id = %mid, "hardware fingerprint loaded");
+    } else {
+        tracing::warn!("could not read /etc/machine-id — heartbeats will omit machine_id");
+    }
+
     let mut ticker = time::interval(interval);
     // Skip the first tick (fires immediately).
     ticker.tick().await;
@@ -45,6 +60,7 @@ pub async fn run(
                 ServiceStatus::Stopped
             },
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
+            machine_id: machine_id.clone(),
             timestamp: Utc::now(),
         };
 

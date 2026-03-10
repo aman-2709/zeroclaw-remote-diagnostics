@@ -162,6 +162,7 @@ async fn handle_heartbeat(payload: &[u8], state: &AppState) {
             pool,
             &hb.device_id,
             &hb.fleet_id,
+            hb.machine_id.as_deref(),
             hb.timestamp,
         )
         .await
@@ -173,9 +174,27 @@ async fn handle_heartbeat(payload: &[u8], state: &AppState) {
         if let Some(device) = devices.get_mut(&hb.device_id) {
             device.last_heartbeat = Some(hb.timestamp);
             device.status = zc_protocol::device::DeviceStatus::Online;
+            // Update machine_id in metadata if newly provided.
+            if let Some(ref mid) = hb.machine_id
+                && let Some(obj) = device.metadata.as_object_mut()
+            {
+                obj.insert("machine_id".into(), serde_json::Value::String(mid.clone()));
+            }
         } else {
             // Auto-register: create a new device entry from the heartbeat.
-            tracing::info!(device_id = %hb.device_id, fleet_id = %hb.fleet_id, "auto-registering new device from heartbeat");
+            tracing::info!(
+                device_id = %hb.device_id,
+                fleet_id = %hb.fleet_id,
+                machine_id = ?hb.machine_id,
+                "auto-registering new device from heartbeat"
+            );
+            let mut metadata = serde_json::json!({
+                "fleet": hb.fleet_id,
+                "auto_registered": true,
+            });
+            if let Some(ref mid) = hb.machine_id {
+                metadata["machine_id"] = serde_json::Value::String(mid.clone());
+            }
             devices.insert(
                 hb.device_id.clone(),
                 zc_protocol::device::DeviceInfo {
@@ -187,10 +206,7 @@ async fn handle_heartbeat(payload: &[u8], state: &AppState) {
                     hardware_type: zc_protocol::device::HardwareType::Custom("auto".into()),
                     certificate_id: None,
                     last_heartbeat: Some(hb.timestamp),
-                    metadata: serde_json::json!({
-                        "fleet": hb.fleet_id,
-                        "auto_registered": true,
-                    }),
+                    metadata,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                 },
@@ -420,6 +436,7 @@ mod tests {
             ollama_status: zc_protocol::device::ServiceStatus::Running,
             can_status: zc_protocol::device::ServiceStatus::Running,
             agent_version: "0.1.0".into(),
+            machine_id: None,
             timestamp: Utc::now(),
         };
 
@@ -448,6 +465,7 @@ mod tests {
             ollama_status: zc_protocol::device::ServiceStatus::Stopped,
             can_status: zc_protocol::device::ServiceStatus::Running,
             agent_version: "0.1.0".into(),
+            machine_id: Some("abc123def456".into()),
             timestamp: Utc::now(),
         };
 
@@ -458,10 +476,13 @@ mod tests {
 
         // Verify device was auto-registered in the in-memory store.
         let devices = state.devices.read().await;
-        let device = devices.get("s32g-001").expect("device should be auto-registered");
+        let device = devices
+            .get("s32g-001")
+            .expect("device should be auto-registered");
         assert_eq!(device.status, zc_protocol::device::DeviceStatus::Online);
         assert!(device.last_heartbeat.is_some());
         assert_eq!(device.metadata["auto_registered"], true);
+        assert_eq!(device.metadata["machine_id"], "abc123def456");
 
         // Verify event was broadcast.
         let event = rx.try_recv().unwrap();

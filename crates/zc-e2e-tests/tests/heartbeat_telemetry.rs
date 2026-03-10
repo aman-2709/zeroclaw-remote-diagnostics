@@ -25,6 +25,7 @@ async fn e2e_heartbeat_updates_device() {
         ollama_status: ServiceStatus::Running,
         can_status: ServiceStatus::Running,
         agent_version: "0.1.0".into(),
+        machine_id: None,
         timestamp: Utc::now(),
     };
 
@@ -59,6 +60,7 @@ async fn e2e_heartbeat_via_rest() {
         ollama_status: ServiceStatus::Unknown,
         can_status: ServiceStatus::Stopped,
         agent_version: "0.1.0".into(),
+        machine_id: None,
         timestamp: Utc::now(),
     };
 
@@ -171,6 +173,7 @@ async fn e2e_full_device_lifecycle() {
         ollama_status: ServiceStatus::Running,
         can_status: ServiceStatus::Stopped,
         agent_version: "0.1.0".into(),
+        machine_id: None,
         timestamp: Utc::now(),
     };
     let (hb_status, _) = h.rest_heartbeat(&hb).await;

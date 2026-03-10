@@ -86,6 +86,10 @@ pub struct Heartbeat {
     pub ollama_status: ServiceStatus,
     pub can_status: ServiceStatus,
     pub agent_version: String,
+    /// Stable hardware fingerprint from `/etc/machine-id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub machine_id: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -144,11 +148,33 @@ mod tests {
             ollama_status: ServiceStatus::Running,
             can_status: ServiceStatus::Running,
             agent_version: "0.1.0".into(),
+            machine_id: Some("a8b9c0d1e2f34567890abcdef0123456".into()),
             timestamp: Utc::now(),
         };
         let json = serde_json::to_string(&hb).unwrap();
         let deserialized: Heartbeat = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.device_id, "rpi-001");
         assert_eq!(deserialized.ollama_status, ServiceStatus::Running);
+        assert_eq!(
+            deserialized.machine_id.as_deref(),
+            Some("a8b9c0d1e2f34567890abcdef0123456")
+        );
+    }
+
+    #[test]
+    fn heartbeat_without_machine_id_deserializes() {
+        // Backward compat: older agents won't send machine_id.
+        let json = r#"{
+            "device_id": "rpi-001",
+            "fleet_id": "fleet-alpha",
+            "status": "online",
+            "uptime_secs": 100,
+            "ollama_status": "running",
+            "can_status": "stopped",
+            "agent_version": "0.1.0",
+            "timestamp": "2026-03-10T12:00:00Z"
+        }"#;
+        let hb: Heartbeat = serde_json::from_str(json).unwrap();
+        assert!(hb.machine_id.is_none());
     }
 }

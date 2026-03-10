@@ -62,6 +62,7 @@ mod tests {
             ollama_status: ServiceStatus::Running,
             can_status: ServiceStatus::Running,
             agent_version: "0.1.0".into(),
+            machine_id: None,
             timestamp: Utc::now(),
         };
 
@@ -95,6 +96,7 @@ mod tests {
             ollama_status: ServiceStatus::Running,
             can_status: ServiceStatus::Stopped,
             agent_version: "0.1.0".into(),
+            machine_id: None,
             timestamp: Utc::now(),
         };
 
