@@ -145,6 +145,9 @@ async fn handle_command_response(payload: &[u8], state: &AppState) {
 }
 
 /// Handle an incoming heartbeat from a device.
+///
+/// Auto-registers unknown devices on first heartbeat so that new edge agents
+/// appear in the dashboard without manual provisioning.
 async fn handle_heartbeat(payload: &[u8], state: &AppState) {
     let hb: Heartbeat = match serde_json::from_slice(payload) {
         Ok(h) => h,
@@ -155,15 +158,43 @@ async fn handle_heartbeat(payload: &[u8], state: &AppState) {
     };
 
     if let Some(pool) = &state.pool {
-        if let Err(e) =
-            crate::db::devices::update_heartbeat(pool, &hb.device_id, hb.timestamp).await
+        if let Err(e) = crate::db::devices::upsert_from_heartbeat(
+            pool,
+            &hb.device_id,
+            &hb.fleet_id,
+            hb.timestamp,
+        )
+        .await
         {
-            tracing::error!(error = %e, "failed to update heartbeat in db");
+            tracing::error!(error = %e, "failed to upsert heartbeat in db");
         }
     } else {
         let mut devices = state.devices.write().await;
         if let Some(device) = devices.get_mut(&hb.device_id) {
             device.last_heartbeat = Some(hb.timestamp);
+            device.status = zc_protocol::device::DeviceStatus::Online;
+        } else {
+            // Auto-register: create a new device entry from the heartbeat.
+            tracing::info!(device_id = %hb.device_id, fleet_id = %hb.fleet_id, "auto-registering new device from heartbeat");
+            devices.insert(
+                hb.device_id.clone(),
+                zc_protocol::device::DeviceInfo {
+                    id: uuid::Uuid::now_v7(),
+                    fleet_id: zc_protocol::device::FleetId(uuid::Uuid::now_v7()),
+                    device_id: hb.device_id.clone(),
+                    status: zc_protocol::device::DeviceStatus::Online,
+                    vin: None,
+                    hardware_type: zc_protocol::device::HardwareType::Custom("auto".into()),
+                    certificate_id: None,
+                    last_heartbeat: Some(hb.timestamp),
+                    metadata: serde_json::json!({
+                        "fleet": hb.fleet_id,
+                        "auto_registered": true,
+                    }),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            );
         }
     }
 
@@ -401,6 +432,42 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("device_heartbeat"));
         assert!(json.contains("rpi-001"));
+    }
+
+    #[tokio::test]
+    async fn handle_heartbeat_auto_registers_unknown_device() {
+        let state = sample_state();
+        let mut rx = state.event_tx.subscribe();
+
+        // s32g-001 is NOT in sample_data — should be auto-registered.
+        let hb = Heartbeat {
+            device_id: "s32g-001".into(),
+            fleet_id: "fleet-alpha".into(),
+            status: zc_protocol::device::DeviceStatus::Online,
+            uptime_secs: 10,
+            ollama_status: zc_protocol::device::ServiceStatus::Stopped,
+            can_status: zc_protocol::device::ServiceStatus::Running,
+            agent_version: "0.1.0".into(),
+            timestamp: Utc::now(),
+        };
+
+        let payload = serde_json::to_vec(&hb).unwrap();
+        let topic = topics::heartbeat("fleet-alpha", "s32g-001");
+
+        handle_incoming(&topic, &payload, &state).await;
+
+        // Verify device was auto-registered in the in-memory store.
+        let devices = state.devices.read().await;
+        let device = devices.get("s32g-001").expect("device should be auto-registered");
+        assert_eq!(device.status, zc_protocol::device::DeviceStatus::Online);
+        assert!(device.last_heartbeat.is_some());
+        assert_eq!(device.metadata["auto_registered"], true);
+
+        // Verify event was broadcast.
+        let event = rx.try_recv().unwrap();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("device_heartbeat"));
+        assert!(json.contains("s32g-001"));
     }
 
     #[tokio::test]

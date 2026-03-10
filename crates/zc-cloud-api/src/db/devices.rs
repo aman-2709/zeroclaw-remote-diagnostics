@@ -83,3 +83,34 @@ pub async fn update_heartbeat(
         .await?;
     Ok(())
 }
+
+/// Auto-register a device from its first heartbeat, or update if it already exists.
+///
+/// Uses INSERT ... ON CONFLICT so that new devices are created automatically
+/// when they first connect, while existing devices just get their heartbeat
+/// and status updated.
+pub async fn upsert_from_heartbeat(
+    pool: &PgPool,
+    device_id: &str,
+    fleet_id: &str,
+    heartbeat_at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO devices (id, fleet_id, device_id, status, hardware_type, last_heartbeat, metadata, created_at, updated_at)
+         VALUES ($1, $2, $3, 'online', 'auto', $4, $5, $6, $6)
+         ON CONFLICT (device_id) DO UPDATE
+         SET last_heartbeat = EXCLUDED.last_heartbeat,
+             status = 'online',
+             updated_at = now()",
+    )
+    .bind(Uuid::now_v7())
+    .bind(Uuid::now_v7()) // fleet_id as UUID — placeholder for string fleet names
+    .bind(device_id)
+    .bind(heartbeat_at)
+    .bind(serde_json::json!({ "fleet": fleet_id, "auto_registered": true }))
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
