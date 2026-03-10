@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ApiConfig::from_env();
 
-    // Build the inference engine — either local (rule-based) or bedrock (cloud LLM).
+    // Build the inference engine — local (rule-based), bedrock (cloud LLM), or tiered (local-first + bedrock fallback).
     let inference: Arc<dyn InferenceEngine> = match config.inference_engine.as_str() {
         "bedrock" => {
             tracing::info!("inference engine: bedrock (cloud LLM)");
@@ -42,6 +42,24 @@ async fn main() -> anyhow::Result<()> {
                 bedrock_client,
                 bedrock_config,
             ))
+        }
+        "tiered" => {
+            tracing::info!("inference engine: tiered (local rules + bedrock fallback)");
+            let local = Box::new(inference::RuleBasedEngine::new());
+            let bedrock_config = inference::bedrock::BedrockConfig::from_env();
+            tracing::info!(model_id = %bedrock_config.model_id, "bedrock model configured");
+            let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let region = aws_config
+                .region()
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "not set".into());
+            tracing::info!(region = %region, "aws region resolved");
+            let bedrock_client = aws_sdk_bedrockruntime::Client::new(&aws_config);
+            let cloud = Box::new(inference::bedrock::BedrockEngine::new(
+                bedrock_client,
+                bedrock_config,
+            ));
+            Arc::new(inference::tiered::TieredEngine::new(local, cloud))
         }
         other => {
             if other != "local" {

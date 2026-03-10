@@ -158,6 +158,18 @@ Fix shell commands failing due to pipe injection and missing binaries, show real
 - [x] 402 tests passing (up from 393), clippy clean, fmt clean, svelte-check clean
 - [x] E2E verified: ip address, cpu temp, disk space, memory, kernel version, system logs all working
 
+## Phase 15: Expand Rule-Based Engine + Wire Tiered Inference
+Fix: "which application is consuming CPU?" failed because no rule-based pattern existed, falling through to Bedrock which generated `top -o %CPU -n 1` (missing `-b` batch flag).
+
+- [x] Add 10 new rule patterns to rules.rs (top, sensors, dmesg, ss, du, lsblk, date, whoami, systemctl, ethtool)
+- [x] Wire `INFERENCE_ENGINE=tiered` match arm in main.rs (local rules first, Bedrock fallback)
+- [x] Update Bedrock system prompt with 10 new shell examples + batch mode notes
+- [x] Update Ollama system prompt with 10 new shell examples + batch mode notes
+- [x] Change run-local.sh from `bedrock` to `tiered`
+- [x] Fix `unrecognized_returns_none` test (now matches `date` rule)
+- [x] Add 21 new tests for new patterns + regression test
+- [x] 452 tests passing (up from 402), clippy clean, fmt clean
+
 ## Later
 - [ ] Real CAN bus interface (SocketCanInterface send/recv)
 - [ ] REST API auth middleware (JWT or API keys)

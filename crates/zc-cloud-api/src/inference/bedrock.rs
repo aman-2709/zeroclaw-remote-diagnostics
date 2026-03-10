@@ -50,6 +50,20 @@ Examples:
 - kernel version → {"action": "shell", "command": "uname -a", "confidence": 0.95}
 - processes → {"action": "shell", "command": "ps aux", "confidence": 0.9}
 - CPU info → {"action": "shell", "command": "lscpu", "confidence": 0.95}
+- CPU usage / top processes → {"action": "shell", "command": "top -b -n 1", "confidence": 0.9}
+- hardware sensors → {"action": "shell", "command": "sensors", "confidence": 0.9}
+- kernel messages → {"action": "shell", "command": "dmesg --level=err,warn -T", "confidence": 0.9}
+- open ports / sockets → {"action": "shell", "command": "ss -tulnp", "confidence": 0.9}
+- directory size → {"action": "shell", "command": "du -sh /var/log", "confidence": 0.85}
+- block devices / partitions → {"action": "shell", "command": "lsblk", "confidence": 0.95}
+- current date/time → {"action": "shell", "command": "date", "confidence": 0.95}
+- current user → {"action": "shell", "command": "whoami", "confidence": 0.95}
+- running services → {"action": "shell", "command": "systemctl list-units --type=service --state=running --no-pager", "confidence": 0.9}
+- ethernet / NIC info → {"action": "shell", "command": "ethtool eth0", "confidence": 0.85}
+
+IMPORTANT notes:
+- `top` MUST use `-b -n 1` flags (batch mode, single iteration). Never use `top` without `-b`.
+- `dmesg` should use `-T --level=err,warn` for human-readable timestamps and relevant severity.
 
 Format: {"action": "shell", "command": "<single command with flags>", "confidence": <0.0-1.0>}
 

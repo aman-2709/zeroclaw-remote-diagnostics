@@ -46,6 +46,18 @@ Examples:
 - "list files in /tmp" → {"action": "shell", "command": "ls -la /tmp", "confidence": 0.9}
 - "CPU info?" → {"action": "shell", "command": "lscpu", "confidence": 0.95}
 - "journalctl status?" → {"action": "shell", "command": "journalctl -n 20 --no-pager", "confidence": 0.9}
+- "which app is consuming CPU?" → {"action": "shell", "command": "top -b -n 1", "confidence": 0.9}
+- "show hardware sensors" → {"action": "shell", "command": "sensors", "confidence": 0.9}
+- "show kernel messages" → {"action": "shell", "command": "dmesg --level=err,warn -T", "confidence": 0.9}
+- "what ports are open?" → {"action": "shell", "command": "ss -tulnp", "confidence": 0.9}
+- "directory size of /var/log?" → {"action": "shell", "command": "du -sh /var/log", "confidence": 0.85}
+- "show block devices" → {"action": "shell", "command": "lsblk", "confidence": 0.95}
+- "what time is it?" → {"action": "shell", "command": "date", "confidence": 0.95}
+- "who am I?" → {"action": "shell", "command": "whoami", "confidence": 0.95}
+- "list running services" → {"action": "shell", "command": "systemctl list-units --type=service --state=running --no-pager", "confidence": 0.9}
+- "ethernet info?" → {"action": "shell", "command": "ethtool eth0", "confidence": 0.85}
+
+IMPORTANT: `top` MUST use `-b -n 1` (batch mode). `dmesg` should use `-T --level=err,warn`.
 
 ## Action 3: reply — Conversational response
 Use this for greetings, questions about yourself, or anything that doesn't need a tool or shell command.

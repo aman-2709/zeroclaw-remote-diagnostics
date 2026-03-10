@@ -26,12 +26,17 @@ trap cleanup EXIT INT TERM
 
 echo "=== Starting local dev stack ==="
 
-# 1. Check mosquitto
+# 1. Check mosquitto — bind to 0.0.0.0 so remote devices (e.g. Pi) can connect
 if pgrep -x mosquitto >/dev/null 2>&1; then
     echo "[1/4] Mosquitto already running on :1883"
 else
-    echo "[1/4] Starting mosquitto on :1883..."
-    mosquitto -p 1883 -d
+    echo "[1/4] Starting mosquitto on 0.0.0.0:1883..."
+    MOSQUITTO_CONF=$(mktemp)
+    cat > "$MOSQUITTO_CONF" <<MQCONF
+listener 1883 0.0.0.0
+allow_anonymous true
+MQCONF
+    mosquitto -c "$MOSQUITTO_CONF" -d
     sleep 0.5
 fi
 
@@ -45,8 +50,10 @@ fi
 # 3. Cloud API
 echo "[3/4] Starting cloud API on :${API_PORT}..."
 PORT=$API_PORT \
+INFERENCE_ENGINE=tiered \
+AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-2} \
 MQTT_ENABLED=true \
-MQTT_FLEET_ID=local-fleet \
+MQTT_FLEET_ID=fleet-alpha \
 MQTT_BROKER_HOST=localhost \
 MQTT_BROKER_PORT=1883 \
 MQTT_USE_TLS=false \

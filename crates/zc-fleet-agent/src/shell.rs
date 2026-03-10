@@ -46,10 +46,10 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "top",
     "whoami",
     // Hardware detail commands (read-only; restricted below)
-    "ping",     // network latency measurement
-    "iw",       // WiFi interface info and signal strength
-    "ethtool",  // Ethernet link speed and interface details
-    "gpspipe",  // GPS location via gpsd daemon
+    "ping",    // network latency measurement
+    "iw",      // WiFi interface info and signal strength
+    "ethtool", // Ethernet link speed and interface details
+    "gpspipe", // GPS location via gpsd daemon
 ];
 
 /// Commands explicitly blocked (dangerous even if somehow reached).
@@ -162,19 +162,15 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
     }
 
     // Restrict ping: block flood mode (-f / --flood)
-    if program == "ping" {
-        if args.iter().any(|a| a == "-f" || a == "--flood") {
-            return Err(ShellError::NotAllowed(
-                "ping -f (flood ping not allowed)".into(),
-            ));
-        }
+    if program == "ping" && args.iter().any(|a| a == "-f" || a == "--flood") {
+        return Err(ShellError::NotAllowed(
+            "ping -f (flood ping not allowed)".into(),
+        ));
     }
 
     // Restrict iw: block write operations (set, connect, disconnect, del, add, new, mesh)
     if program == "iw" {
-        const BLOCKED_IW: &[&str] = &[
-            "set", "connect", "disconnect", "del", "add", "new", "mesh",
-        ];
+        const BLOCKED_IW: &[&str] = &["set", "connect", "disconnect", "del", "add", "new", "mesh"];
         if args.iter().any(|a| BLOCKED_IW.contains(&a.as_str())) {
             return Err(ShellError::NotAllowed(
                 "iw write operations not allowed".into(),
@@ -392,7 +388,10 @@ mod tests {
     #[tokio::test]
     async fn ping_loopback_succeeds() {
         let result = execute("ping -c 1 127.0.0.1").await;
-        assert!(result.is_ok(), "ping loopback should be allowed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "ping loopback should be allowed: {result:?}"
+        );
     }
 
     #[tokio::test]

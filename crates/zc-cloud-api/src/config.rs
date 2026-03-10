@@ -18,7 +18,8 @@ pub struct ApiConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub cors_origins: Vec<String>,
-    /// Inference engine selection: "local" (rule-based) or "bedrock" (cloud LLM).
+    /// Inference engine selection: "local" (rule-based), "bedrock" (cloud LLM),
+    /// or "tiered" (local rules first, bedrock fallback).
     /// Set via INFERENCE_ENGINE env var. Defaults to "local".
     #[serde(default = "default_inference_engine")]
     pub inference_engine: String,

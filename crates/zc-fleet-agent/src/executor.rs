@@ -203,6 +203,11 @@ impl<'a> CommandExecutor<'a> {
                     tracing::info!(command = %command_str, "shell output was truncated");
                 }
 
+                // Provide a helpful message when the command succeeds but produces no output
+                if output.trim().is_empty() {
+                    output = format!("(no output from `{command_str}`)");
+                }
+
                 let latency_ms = start.elapsed().as_millis() as u64;
                 CommandResponse {
                     command_id: envelope.id,
@@ -430,6 +435,31 @@ mod tests {
 
         assert_eq!(resp.status, CommandStatus::Failed);
         assert!(resp.error.unwrap().contains("shell:"));
+    }
+
+    #[tokio::test]
+    async fn execute_shell_empty_output_shows_message() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+        let executor = make_executor(&registry, &can, &logs);
+
+        // `ip -details link show type can` returns empty on machines without CAN interfaces
+        let mut cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "show CAN interface", "admin");
+        cmd.parsed_intent = Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ip -details link show type can".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        let text = resp.response_text.unwrap();
+        assert!(
+            text.contains("no output"),
+            "empty shell output should show helpful message, got: {text}"
+        );
     }
 
     // ── Reply action tests ───────────────────────────────────────

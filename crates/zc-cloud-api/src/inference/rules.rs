@@ -233,7 +233,10 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     // ── Shell commands (system info queries) ─────────────────
 
     // IP address / network
-    if matches_any(lower, &["ip address", "ip addr", "network interface", "network info"]) {
+    if matches_any(
+        lower,
+        &["ip address", "ip addr", "network interface", "network info"],
+    ) {
         return Some(ParsedIntent {
             action: ActionKind::Shell,
             tool_name: "ip -brief addr".into(),
@@ -262,8 +265,29 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // Hardware sensors (lm-sensors)
+    if matches_any(
+        lower,
+        &[
+            "sensor",
+            "temperature sensor",
+            "hardware sensor",
+            "voltage sensor",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "sensors".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
     // Disk space
-    if matches_any(lower, &["disk space", "disk usage", "storage", "free space"]) {
+    if matches_any(
+        lower,
+        &["disk space", "disk usage", "storage", "free space"],
+    ) {
         return Some(ParsedIntent {
             action: ActionKind::Shell,
             tool_name: "df -h".into(),
@@ -292,6 +316,25 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // Kernel messages / dmesg (must be before kernel version to avoid "kernel" overlap)
+    if matches_any(
+        lower,
+        &[
+            "kernel message",
+            "kernel log",
+            "dmesg",
+            "boot message",
+            "kernel ring",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "dmesg --level=err,warn -T".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
     // Kernel version
     if matches_any(lower, &["kernel version", "kernel", "uname"]) {
         return Some(ParsedIntent {
@@ -309,6 +352,25 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "lscpu".into(),
             tool_args: json!({}),
             confidence: 0.90,
+        });
+    }
+
+    // CPU usage / top processes
+    if matches_any(
+        lower,
+        &[
+            "cpu usage",
+            "consuming cpu",
+            "which application",
+            "highest cpu",
+            "memory hog",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "top -b -n 1".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
         });
     }
 
@@ -333,7 +395,10 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     }
 
     // Machine ID
-    if matches_any(lower, &["machine id", "machine-id", "device id", "device identifier"]) {
+    if matches_any(
+        lower,
+        &["machine id", "machine-id", "device id", "device identifier"],
+    ) {
         return Some(ParsedIntent {
             action: ActionKind::Shell,
             tool_name: "cat /etc/machine-id".into(),
@@ -382,7 +447,32 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
-    // WiFi signal strength / wireless info
+    // Internet / download speed — no safe single command available
+    if matches_any(
+        lower,
+        &[
+            "internet speed",
+            "download speed",
+            "upload speed",
+            "bandwidth",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Reply,
+            tool_name: String::new(),
+            tool_args: json!({
+                "message": "Internet speed testing (bandwidth) is not available — \
+                    it requires speedtest-cli or iperf3 which are not in the safety allowlist.\n\n\
+                    Try these instead:\n\
+                    • \"ping test\" — measures network latency to 8.8.8.8 (3 pings)\n\
+                    • \"wifi info\" — shows WiFi link speed and signal strength\n\
+                    • \"show open ports\" — lists active network connections"
+            }),
+            confidence: 0.95,
+        });
+    }
+
+    // WiFi signal strength / wireless info / wifi speed
     if matches_any(
         lower,
         &[
@@ -392,6 +482,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             "wifi strength",
             "wifi info",
             "wireless info",
+            "wifi speed",
+            "wireless speed",
         ],
     ) {
         return Some(ParsedIntent {
@@ -461,9 +553,102 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     ) {
         return Some(ParsedIntent {
             action: ActionKind::Shell,
-            tool_name: "ip -details link show".into(),
+            tool_name: "ip -details link show type can".into(),
             tool_args: json!({}),
             confidence: 0.85,
+        });
+    }
+
+    // Sockets / open ports / network connections
+    if matches_any(
+        lower,
+        &[
+            "socket",
+            "open port",
+            "listening port",
+            "listening",
+            "network connection",
+            "active connection",
+            "netstat",
+        ],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ss -tulnp".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // Directory size
+    if matches_any(lower, &["directory size", "folder size", "disk usage by"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "du -sh /var/log".into(),
+            tool_args: json!({}),
+            confidence: 0.80,
+        });
+    }
+
+    // Block devices / partitions
+    if matches_any(
+        lower,
+        &["block device", "lsblk", "partition", "disk partition"],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "lsblk".into(),
+            tool_args: json!({}),
+            confidence: 0.90,
+        });
+    }
+
+    // Current date/time
+    if matches_any(
+        lower,
+        &["current date", "current time", "what time", "what date"],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "date".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
+    // Current user
+    if matches_any(
+        lower,
+        &["current user", "whoami", "who am i", "logged in as"],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "whoami".into(),
+            tool_args: json!({}),
+            confidence: 0.95,
+        });
+    }
+
+    // Running services (systemctl)
+    if matches_any(
+        lower,
+        &["service status", "systemctl status", "service running"],
+    ) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "systemctl list-units --type=service --state=running --no-pager".into(),
+            tool_args: json!({}),
+            confidence: 0.85,
+        });
+    }
+
+    // Ethernet / NIC info ("link speed" omitted — collides with PID "speed" parser)
+    if matches_any(lower, &["ethernet", "nic info", "ethtool"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Shell,
+            tool_name: "ethtool eth0".into(),
+            tool_args: json!({}),
+            confidence: 0.80,
         });
     }
 
@@ -478,15 +663,17 @@ fn matches_any(text: &str, patterns: &[&str]) -> bool {
 /// Try to parse a PID read command.
 fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
     // Named PIDs
+    // Keywords must be specific enough to avoid false positives with system queries
+    // (e.g., "internet speed" ≠ vehicle speed, "system load" ≠ engine load).
     let named_pids = [
         (&["rpm", "engine speed", "engine rpm"][..], "0x0C"),
-        (&["speed", "vehicle speed"][..], "0x0D"),
+        (&["vehicle speed", "car speed"][..], "0x0D"),
         (&["coolant", "coolant temp", "engine temp"][..], "0x05"),
         (&["throttle", "throttle position"][..], "0x11"),
-        (&["fuel level", "fuel"][..], "0x2F"),
-        (&["engine load", "load"][..], "0x04"),
+        (&["fuel level", "fuel tank"][..], "0x2F"),
+        (&["engine load"][..], "0x04"),
         (&["intake temp", "intake air"][..], "0x0F"),
-        (&["timing advance", "timing"][..], "0x0E"),
+        (&["timing advance"][..], "0x0E"),
     ];
 
     for (keywords, pid) in &named_pids {
@@ -807,7 +994,7 @@ mod tests {
     #[test]
     fn unrecognized_returns_none() {
         assert!(parse("hello world").is_none());
-        assert!(parse("what time is it").is_none());
+        assert!(parse("bake a pizza").is_none());
         assert!(parse("deploy the application").is_none());
     }
 
@@ -880,7 +1067,10 @@ mod tests {
     fn parse_cpu_temperature() {
         let intent = parse("whats the cpu temperature?").unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
-        assert_eq!(intent.tool_name, "cat /sys/class/thermal/thermal_zone0/temp");
+        assert_eq!(
+            intent.tool_name,
+            "cat /sys/class/thermal/thermal_zone0/temp"
+        );
     }
 
     #[test]
@@ -996,6 +1186,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_wifi_speed() {
+        let intent = parse("whats the wifi speed?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "iw dev");
+    }
+
+    #[test]
+    fn parse_internet_speed_returns_reply() {
+        let intent = parse("whats the internet speed?").unwrap();
+        assert_eq!(intent.action, ActionKind::Reply);
+        let msg = intent.tool_args["message"].as_str().unwrap();
+        assert!(msg.contains("not available"), "should explain limitation");
+    }
+
+    #[test]
+    fn parse_download_speed_returns_reply() {
+        let intent = parse("test download speed").unwrap();
+        assert_eq!(intent.action, ActionKind::Reply);
+    }
+
+    #[test]
     fn parse_network_latency() {
         let intent = parse("check network latency").unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
@@ -1034,13 +1245,173 @@ mod tests {
     fn parse_can_interface_state() {
         let intent = parse("show CAN interface state").unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
-        assert_eq!(intent.tool_name, "ip -details link show");
+        assert_eq!(intent.tool_name, "ip -details link show type can");
     }
 
     #[test]
     fn parse_can_bitrate() {
         let intent = parse("what is the CAN bitrate?").unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
-        assert_eq!(intent.tool_name, "ip -details link show");
+        assert_eq!(intent.tool_name, "ip -details link show type can");
+    }
+
+    // ── New shell command tests (Phase 15) ──────────────────────
+
+    #[test]
+    fn parse_cpu_usage() {
+        let intent = parse("show cpu usage").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "top -b -n 1");
+    }
+
+    #[test]
+    fn parse_which_application_consuming_cpu() {
+        let intent = parse("which application is consuming lot of CPU?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "top -b -n 1");
+    }
+
+    #[test]
+    fn parse_sensors() {
+        let intent = parse("show hardware sensor readings").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "sensors");
+    }
+
+    #[test]
+    fn parse_temperature_sensor() {
+        let intent = parse("read temperature sensor data").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "sensors");
+    }
+
+    #[test]
+    fn parse_dmesg() {
+        let intent = parse("show kernel messages").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "dmesg --level=err,warn -T");
+    }
+
+    #[test]
+    fn parse_dmesg_direct() {
+        let intent = parse("run dmesg").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "dmesg --level=err,warn -T");
+    }
+
+    #[test]
+    fn parse_open_ports() {
+        let intent = parse("show open ports").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ss -tulnp");
+    }
+
+    #[test]
+    fn parse_listening_ports() {
+        let intent = parse("what ports are listening?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ss -tulnp");
+    }
+
+    #[test]
+    fn parse_directory_size() {
+        let intent = parse("what is the directory size of logs?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "du -sh /var/log");
+    }
+
+    #[test]
+    fn parse_folder_size() {
+        let intent = parse("check folder size").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "du -sh /var/log");
+    }
+
+    #[test]
+    fn parse_lsblk() {
+        let intent = parse("show block devices").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "lsblk");
+    }
+
+    #[test]
+    fn parse_disk_partition() {
+        let intent = parse("list disk partitions").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "lsblk");
+    }
+
+    #[test]
+    fn parse_current_time() {
+        let intent = parse("what time is it?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "date");
+    }
+
+    #[test]
+    fn parse_current_date() {
+        let intent = parse("show current date").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "date");
+    }
+
+    #[test]
+    fn parse_whoami() {
+        let intent = parse("whoami").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "whoami");
+    }
+
+    #[test]
+    fn parse_current_user() {
+        let intent = parse("who is the current user?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "whoami");
+    }
+
+    #[test]
+    fn parse_service_status() {
+        let intent = parse("show service status").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(
+            intent.tool_name,
+            "systemctl list-units --type=service --state=running --no-pager"
+        );
+    }
+
+    #[test]
+    fn parse_services_running() {
+        let intent = parse("which services are service running?").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(
+            intent.tool_name,
+            "systemctl list-units --type=service --state=running --no-pager"
+        );
+    }
+
+    #[test]
+    fn parse_ethtool() {
+        let intent = parse("show ethernet info").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ethtool eth0");
+    }
+
+    #[test]
+    fn parse_nic_info() {
+        let intent = parse("show nic info").unwrap();
+        assert_eq!(intent.action, ActionKind::Shell);
+        assert_eq!(intent.tool_name, "ethtool eth0");
+    }
+
+    // ── Regression test for original bug ────────────────────────
+
+    #[test]
+    fn regression_cpu_consuming_app_matches_top_not_ps() {
+        // Original bug: "Which application is consuming lot of CPU?" fell through to
+        // Bedrock which generated `top -o %CPU -n 1` (missing -b batch flag).
+        // Must match rule-based `top -b -n 1` and NOT fall through to ps aux.
+        let intent = parse("Which application is consuming lot of CPU?").unwrap();
+        assert_eq!(intent.tool_name, "top -b -n 1");
+        assert_ne!(intent.tool_name, "ps aux");
     }
 }
