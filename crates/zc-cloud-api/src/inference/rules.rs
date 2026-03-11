@@ -43,6 +43,76 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
     let lower = text.to_lowercase();
     let lower = lower.trim();
 
+    // ── UDS / Hella ECU commands (must come before generic OBD-II) ─
+
+    // read_uds_dtcs: "read BCR dtcs", "BCR diagnostics", "hella dtcs", "BCF fault codes"
+    if let Some(ecu) = extract_ecu_name(lower) {
+        if matches_any(lower, &["dtc", "diagnostic", "trouble code", "fault code"]) {
+            return Some(ParsedIntent {
+                action: ActionKind::Tool,
+                tool_name: "read_uds_dtcs".into(),
+                tool_args: json!({ "ecu": ecu }),
+                confidence: 0.92,
+            });
+        }
+
+        // read_uds_did: "BCR voltage", "BCR brake light", "BCR status", "read BCR data"
+        if matches_any(
+            lower,
+            &[
+                "voltage",
+                "brake light",
+                "power supply",
+                "reprogramming",
+                "flash attempt",
+                "read data",
+                "sensor",
+                "status",
+            ],
+        ) {
+            return Some(ParsedIntent {
+                action: ActionKind::Tool,
+                tool_name: "read_uds_did".into(),
+                tool_args: json!({ "ecu": ecu }),
+                confidence: 0.90,
+            });
+        }
+
+        // uds_session_control: "BCR extended session", "BCR tester present"
+        if matches_any(lower, &["session", "tester present", "keep alive"]) {
+            let tester_present = lower.contains("tester") || lower.contains("keep alive");
+            if tester_present {
+                return Some(ParsedIntent {
+                    action: ActionKind::Tool,
+                    tool_name: "uds_session_control".into(),
+                    tool_args: json!({ "ecu": ecu, "tester_present": true }),
+                    confidence: 0.90,
+                });
+            }
+            let session = if lower.contains("default") {
+                "default"
+            } else {
+                "extended"
+            };
+            return Some(ParsedIntent {
+                action: ActionKind::Tool,
+                tool_name: "uds_session_control".into(),
+                tool_args: json!({ "ecu": ecu, "session": session }),
+                confidence: 0.90,
+            });
+        }
+    }
+
+    // Generic "hella diagnostics" without specific ECU → default to BCR
+    if matches_any(lower, &["hella diagnostic", "hella dtc", "hella status"]) {
+        return Some(ParsedIntent {
+            action: ActionKind::Tool,
+            tool_name: "read_uds_dtcs".into(),
+            tool_args: json!({ "ecu": "BCR" }),
+            confidence: 0.85,
+        });
+    }
+
     // ── CAN bus / OBD-II commands ───────────────────────────────
 
     // read_dtcs: "read dtcs", "get dtcs", "diagnostic trouble codes", "check engine codes"
@@ -704,6 +774,17 @@ fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
     None
 }
 
+/// Extract a known ECU name ("BCR", "BCF") from text (case-insensitive).
+fn extract_ecu_name(text: &str) -> Option<&'static str> {
+    if text.contains("bcr") {
+        Some("BCR")
+    } else if text.contains("bcf") {
+        Some("BCF")
+    } else {
+        None
+    }
+}
+
 /// Extract a hex PID value like "0x0C" or "0x2F" from text.
 fn extract_hex_value(text: &str) -> Option<String> {
     for word in text.split_whitespace() {
@@ -987,6 +1068,73 @@ mod tests {
         assert_eq!(intent.tool_name, "query_journal");
         // No explicit service → falls back to systemd-journald.service
         assert_eq!(intent.tool_args["unit"], "systemd-journald.service");
+    }
+
+    // ── UDS / Hella ECU commands ────────────────────────────────
+
+    #[test]
+    fn parse_bcr_dtcs() {
+        let intent = parse("read BCR dtcs").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_dtcs");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+    }
+
+    #[test]
+    fn parse_bcf_diagnostic_trouble_codes() {
+        let intent = parse("BCF diagnostic trouble codes").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_dtcs");
+        assert_eq!(intent.tool_args["ecu"], "BCF");
+    }
+
+    #[test]
+    fn parse_bcr_voltage() {
+        let intent = parse("BCR voltage status").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_did");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+    }
+
+    #[test]
+    fn parse_bcr_brake_light() {
+        let intent = parse("check BCR brake light").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_did");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+    }
+
+    #[test]
+    fn parse_bcr_reprogramming() {
+        let intent = parse("BCR reprogramming attempts").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_did");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+    }
+
+    #[test]
+    fn parse_bcr_extended_session() {
+        let intent = parse("BCR extended session").unwrap();
+        assert_eq!(intent.tool_name, "uds_session_control");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+        assert_eq!(intent.tool_args["session"], "extended");
+    }
+
+    #[test]
+    fn parse_bcr_tester_present() {
+        let intent = parse("BCR tester present").unwrap();
+        assert_eq!(intent.tool_name, "uds_session_control");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+        assert_eq!(intent.tool_args["tester_present"], true);
+    }
+
+    #[test]
+    fn parse_hella_diagnostics_defaults_to_bcr() {
+        let intent = parse("hella diagnostics").unwrap();
+        assert_eq!(intent.tool_name, "read_uds_dtcs");
+        assert_eq!(intent.tool_args["ecu"], "BCR");
+    }
+
+    #[test]
+    fn parse_extract_ecu_name() {
+        assert_eq!(extract_ecu_name("read bcr dtcs"), Some("BCR"));
+        assert_eq!(extract_ecu_name("bcf voltage"), Some("BCF"));
+        assert_eq!(extract_ecu_name("read dtcs"), None);
     }
 
     // ── Unrecognized ────────────────────────────────────────────

@@ -140,6 +140,42 @@ CAN details
 CAN interface
 ```
 
+### Hella UDS — Read DTCs (BCR / BCF)
+
+```
+read BCR DTCs
+BCR diagnostics
+BCR fault codes
+BCR trouble codes
+read BCF DTCs
+BCF diagnostics
+hella DTCs
+```
+
+### Hella UDS — Read DIDs (BCR / BCF)
+
+```
+BCR voltage
+BCR brake light status
+BCR power supply
+BCR sensor data
+read BCR data
+BCR status
+BCF voltage
+BCF data
+```
+
+### Hella UDS — Session Control (BCR / BCF)
+
+```
+BCR extended session
+BCR default session
+BCR tester present
+BCR keep alive
+BCF extended session
+BCF tester present
+```
+
 ---
 
 ## Log Analysis

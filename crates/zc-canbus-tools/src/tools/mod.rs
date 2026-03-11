@@ -4,13 +4,19 @@ pub mod can_monitor;
 pub mod read_dtcs;
 pub mod read_freeze;
 pub mod read_pid;
+pub mod read_uds_did;
+pub mod read_uds_dtcs;
 pub mod read_vin;
+pub mod uds_session;
 
 pub use can_monitor::CanMonitorTool;
 pub use read_dtcs::ReadDtcs;
 pub use read_freeze::ReadFreeze;
 pub use read_pid::ReadPid;
+pub use read_uds_did::ReadUdsDid;
+pub use read_uds_dtcs::ReadUdsDtcs;
 pub use read_vin::ReadVin;
+pub use uds_session::UdsSessionControl;
 
 use crate::types::CanTool;
 
@@ -22,6 +28,9 @@ pub fn all_tools() -> Vec<Box<dyn CanTool>> {
         Box::new(ReadVin),
         Box::new(ReadFreeze),
         Box::new(CanMonitorTool),
+        Box::new(ReadUdsDtcs),
+        Box::new(ReadUdsDid),
+        Box::new(UdsSessionControl),
     ]
 }
 
@@ -30,9 +39,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_tools_returns_five() {
+    fn all_tools_returns_eight() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 8);
     }
 
     #[test]

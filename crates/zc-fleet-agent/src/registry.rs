@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn registry_with_defaults() {
         let reg = ToolRegistry::with_defaults();
-        assert_eq!(reg.len(), 10); // 5 CAN + 5 log
+        assert_eq!(reg.len(), 13); // 8 CAN + 5 log
     }
 
     #[test]
@@ -162,13 +162,16 @@ mod tests {
     fn list_tools_has_all() {
         let reg = ToolRegistry::with_defaults();
         let tools = reg.list_tools();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 13);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"read_pid"));
         assert!(names.contains(&"read_dtcs"));
         assert!(names.contains(&"read_vin"));
         assert!(names.contains(&"read_freeze"));
         assert!(names.contains(&"can_monitor"));
+        assert!(names.contains(&"read_uds_dtcs"));
+        assert!(names.contains(&"read_uds_did"));
+        assert!(names.contains(&"uds_session_control"));
         assert!(names.contains(&"search_logs"));
         assert!(names.contains(&"analyze_errors"));
         assert!(names.contains(&"log_stats"));

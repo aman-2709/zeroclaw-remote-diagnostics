@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use super::{InferenceEngine, ParseResult};
 use zc_protocol::commands::{ActionKind, ParsedIntent};
 
-/// System prompt listing all 10 tools plus shell and reply action types.
+/// System prompt listing all 13 tools plus shell and reply action types.
 ///
 /// Embedded as a const to avoid pulling zc-canbus-tools/zc-log-tools as dependencies
 /// (which would bring in socketcan, regex, etc. into the cloud API binary).
@@ -28,11 +28,14 @@ Available tools:
 3. read_freeze — Read freeze frame data. Args: {}
 4. read_pid — Read an OBD-II sensor value. Args: {"pid": "0x0C"} (0x0C=RPM, 0x0D=speed, 0x05=coolant temp, 0x11=throttle, 0x2F=fuel level, 0x04=engine load, 0x0F=intake temp, 0x0E=timing advance)
 5. can_monitor — Monitor raw CAN bus traffic. Args: {"duration_secs": 10}
-6. search_logs — Search device logs. Args: {"path": "/var/log/syslog", "query": "error"}
-7. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
-8. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
-9. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
-10. query_journal — Query systemd journal for a service. Args: {"unit": "nginx.service", "lines": 50}
+6. read_uds_dtcs — Read DTCs from a UDS ECU (Hella BCR/BCF). Args: {"ecu": "BCR"} or {"ecu": "BCF"}
+7. read_uds_did — Read a Data Identifier from a UDS ECU. Args: {"ecu": "BCR"} (reads all known DIDs) or {"ecu": "BCR", "did": 64773}
+8. uds_session_control — Control diagnostic session on a UDS ECU. Args: {"ecu": "BCR", "session": "extended"} or {"ecu": "BCR", "tester_present": true}
+9. search_logs — Search device logs. Args: {"path": "/var/log/syslog", "query": "error"}
+10. analyze_errors — Analyze error patterns in logs. Args: {"path": "/var/log/syslog"}
+11. log_stats — Get log statistics. Args: {"path": "/var/log/syslog"}
+12. tail_logs — Show recent log entries. Args: {"path": "/var/log/syslog", "lines": 50}
+13. query_journal — Query systemd journal for a service. Args: {"unit": "nginx.service", "lines": 50}
 
 Format: {"action": "tool", "tool_name": "<name>", "tool_args": {<args>}, "confidence": <0.0-1.0>}
 
@@ -86,6 +89,9 @@ const KNOWN_TOOLS: &[&str] = &[
     "read_freeze",
     "read_pid",
     "can_monitor",
+    "read_uds_dtcs",
+    "read_uds_did",
+    "uds_session_control",
     "search_logs",
     "analyze_errors",
     "log_stats",

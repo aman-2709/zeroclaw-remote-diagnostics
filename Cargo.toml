@@ -49,7 +49,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"]
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
 
 # CAN bus
-socketcan = "3.5"
+socketcan = { version = "3.5", features = ["tokio"] }
 
 # Text processing
 regex = "1.11"

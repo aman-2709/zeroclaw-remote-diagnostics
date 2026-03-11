@@ -30,7 +30,7 @@ pub struct TestHarness {
     pub cloud_router: Router,
     /// Shared MQTT mock between cloud and agent.
     pub mqtt: Arc<MockChannel>,
-    /// Fleet agent tool registry (9 tools: 5 CAN + 4 log).
+    /// Fleet agent tool registry (13 tools: 8 CAN + 5 log).
     pub registry: ToolRegistry,
     /// Mock CAN bus interface for agent-side tool execution.
     pub can_interface: MockCanInterface,

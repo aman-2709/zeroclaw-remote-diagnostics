@@ -13,9 +13,9 @@ use zc_fleet_agent::executor::CommandExecutor;
 use zc_fleet_agent::inference::{OllamaClient, OllamaConfig};
 use zc_protocol::commands::{ActionKind, CommandEnvelope, CommandStatus, ParsedIntent};
 
-/// All 10 tools are parseable through the RuleBasedEngine via the REST API.
+/// All 13 tools are parseable through the RuleBasedEngine via the REST API.
 #[tokio::test]
-async fn e2e_all_ten_tools_parseable() {
+async fn e2e_all_thirteen_tools_parseable() {
     let h = TestHarness::with_sample_data();
 
     // Map of command text → expected tool_name for RuleBasedEngine patterns
@@ -25,6 +25,9 @@ async fn e2e_all_ten_tools_parseable() {
         ("read freeze frame", "read_freeze"),
         ("read engine RPM", "read_pid"),
         ("monitor CAN bus", "can_monitor"),
+        ("read BCR dtcs", "read_uds_dtcs"),
+        ("BCR voltage status", "read_uds_did"),
+        ("BCR extended session", "uds_session_control"),
         ("search logs for error", "search_logs"),
         ("analyze errors in logs", "analyze_errors"),
         ("show log stats", "log_stats"),

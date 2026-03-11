@@ -7,10 +7,12 @@ use async_trait::async_trait;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::ecu_profile;
 use crate::error::{CanError, CanResult};
 use crate::interface::CanInterface;
 use crate::safety;
 use crate::types::{CanFrame, OBD_REQUEST_ID};
+use crate::uds_safety;
 
 /// Mock CAN interface with scripted responses and frame recording.
 pub struct MockCanInterface {
@@ -66,18 +68,35 @@ impl Default for MockCanInterface {
 #[async_trait]
 impl CanInterface for MockCanInterface {
     async fn send_frame(&self, frame: &CanFrame) -> CanResult<()> {
-        // Safety enforcement at interface level.
-        // Only check OBD-II requests (data[0] = 0x01–0x07 = length byte).
-        // ISO-TP frames (FC = 0x30, etc.) use the same CAN ID but are not
-        // OBD service requests and must not be blocked.
-        if self.enforce_safety
-            && frame.id == OBD_REQUEST_ID
-            && frame.data.len() >= 2
-            && (1..=7).contains(&frame.data[0])
-        {
-            let mode = frame.data[1];
-            if !safety::is_mode_allowed(mode) {
-                return Err(CanError::SafetyViolation { mode });
+        if self.enforce_safety && frame.data.len() >= 2 {
+            let pci_len = frame.data[0];
+
+            // OBD-II safety: check mode for standard OBD-II broadcast requests.
+            // ISO-TP frames (FC = 0x30, etc.) use the same CAN ID but are not
+            // OBD service requests and must not be blocked.
+            if frame.id == OBD_REQUEST_ID && (1..=7).contains(&pci_len) {
+                let mode = frame.data[1];
+                if !safety::is_mode_allowed(mode) {
+                    return Err(CanError::SafetyViolation { mode });
+                }
+            }
+
+            // UDS safety: check service ID for known ECU request IDs.
+            // Skip ISO-TP Flow Control frames (PCI byte starts with 0x3x).
+            let is_flow_control = (pci_len >> 4) == 0x03;
+            if !is_flow_control {
+                let is_ecu_request = ecu_profile::all_profiles()
+                    .iter()
+                    .any(|p| p.request_id == frame.id);
+                if is_ecu_request && (1..=7).contains(&pci_len) {
+                    let service_id = frame.data[1];
+                    if !uds_safety::is_uds_service_allowed(service_id) {
+                        return Err(CanError::UdsSafetyViolation {
+                            service_id,
+                            service_name: uds_safety::uds_service_name(service_id).to_string(),
+                        });
+                    }
+                }
             }
         }
 
@@ -166,5 +185,77 @@ mod tests {
 
         let received = mock.recv_frame(Duration::from_millis(100)).await.unwrap();
         assert_eq!(received, frame);
+    }
+
+    // ── UDS safety enforcement ──────────────────────────────────
+
+    #[tokio::test]
+    async fn uds_allows_read_did() {
+        let mock = MockCanInterface::new();
+        // UDS ReadDataByIdentifier (0x22) on BCR request ID 0x60D
+        let frame = CanFrame::new(0x60D, vec![0x03, 0x22, 0xFD, 0x05, 0, 0, 0, 0]);
+        mock.send_frame(&frame).await.unwrap();
+        assert_eq!(mock.sent_frames().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn uds_allows_tester_present() {
+        let mock = MockCanInterface::new();
+        let frame = CanFrame::new(0x60D, vec![0x02, 0x3E, 0x00, 0, 0, 0, 0, 0]);
+        mock.send_frame(&frame).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uds_blocks_write_did() {
+        let mock = MockCanInterface::new();
+        // UDS WriteDataByIdentifier (0x2E) — blocked
+        let frame = CanFrame::new(0x60D, vec![0x04, 0x2E, 0xFD, 0x05, 0x00, 0, 0, 0]);
+        let result = mock.send_frame(&frame).await;
+        assert!(matches!(
+            result,
+            Err(CanError::UdsSafetyViolation {
+                service_id: 0x2E,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn uds_blocks_security_access() {
+        let mock = MockCanInterface::new();
+        // UDS SecurityAccess (0x27) — blocked
+        let frame = CanFrame::new(0x60D, vec![0x02, 0x27, 0x01, 0, 0, 0, 0, 0]);
+        let result = mock.send_frame(&frame).await;
+        assert!(matches!(
+            result,
+            Err(CanError::UdsSafetyViolation {
+                service_id: 0x27,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn uds_allows_flow_control() {
+        let mock = MockCanInterface::new();
+        // ISO-TP Flow Control frame (0x30) on BCR request ID — must pass through
+        let frame = CanFrame::new(0x60D, vec![0x30, 0x00, 0x00, 0, 0, 0, 0, 0]);
+        mock.send_frame(&frame).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uds_safety_bcf_request_id() {
+        let mock = MockCanInterface::new();
+        // UDS ReadDTCInformation (0x19) on BCF request ID 0x609 — allowed
+        let frame = CanFrame::new(0x609, vec![0x03, 0x19, 0x02, 0xFF, 0, 0, 0, 0]);
+        mock.send_frame(&frame).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn non_ecu_id_passes_without_uds_check() {
+        let mock = MockCanInterface::new();
+        // Arbitrary CAN ID that isn't OBD-II or any known ECU — should pass
+        let frame = CanFrame::new(0x123, vec![0x02, 0x2E, 0xAA, 0, 0, 0, 0, 0]);
+        mock.send_frame(&frame).await.unwrap();
     }
 }

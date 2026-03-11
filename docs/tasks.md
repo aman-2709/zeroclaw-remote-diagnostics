@@ -170,7 +170,24 @@ Fix: "which application is consuming CPU?" failed because no rule-based pattern 
 - [x] Add 21 new tests for new patterns + regression test
 - [x] 452 tests passing (up from 402), clippy clean, fmt clean
 
+## Phase 16: Hella BCR UDS Integration
+- [x] ECU profile definitions (ecu_profile.rs) — BCR (0x60D/0x58D) + BCF (0x609/0x589) with known DIDs
+- [x] UDS service allowlist (uds_safety.rs) — read-only: 0x10, 0x19, 0x22, 0x3E; blocks writes/flash/security
+- [x] UDS protocol helpers (uds.rs) — request builders, send/receive, ISO-TP multi-frame, negative response handling, NRC descriptions
+- [x] New tool: read_uds_dtcs — Read DTCs via UDS 0x19 (ReadDTCInformation) for BCR/BCF
+- [x] New tool: read_uds_did — Read DIDs via UDS 0x22 (ReadDataByIdentifier) — single or all known DIDs
+- [x] New tool: uds_session_control — Session control (0x10) + TesterPresent (0x3E), programming session blocked
+- [x] UDS error variants (error.rs) — UdsSafetyViolation, UdsNegativeResponse, UnknownEcu
+- [x] UDS safety checks in MockCanInterface and SocketCanInterface — validates service ID for ECU request CAN IDs
+- [x] Updated all_tools() — 5 → 8 CAN bus tools
+- [x] Updated fleet agent registry (13 tools: 8 CAN + 5 log)
+- [x] Updated fleet agent inference.rs SYSTEM_PROMPT + KNOWN_TOOLS (10 → 13)
+- [x] Updated cloud-side rules.rs with BCR/BCF/Hella UDS patterns (9 new test cases)
+- [x] Updated cloud-side bedrock.rs system prompt + KNOWN_TOOLS (10 → 13)
+- [x] Updated E2E tests (tool count assertions, inference path tests)
+- [x] 535 tests passing (up from 452), clippy clean, fmt clean
+
 ## Later
-- [ ] Real CAN bus interface (SocketCanInterface send/recv)
+- [x] Wire SocketCanInterface to real socketcan (conditional on Linux + config.can_interface, graceful fallback to mock)
 - [ ] REST API auth middleware (JWT or API keys)
 - [ ] Deployment pipeline (Lambda handler, CI/CD)

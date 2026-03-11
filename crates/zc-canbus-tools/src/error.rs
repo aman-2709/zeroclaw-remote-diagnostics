@@ -14,6 +14,22 @@ pub enum CanError {
     #[error("Safety violation: mode 0x{mode:02X} is not allowed")]
     SafetyViolation { mode: u8 },
 
+    #[error("UDS safety violation: service 0x{service_id:02X} ({service_name}) is not allowed")]
+    UdsSafetyViolation {
+        service_id: u8,
+        service_name: String,
+    },
+
+    #[error("UDS negative response: service 0x{service_id:02X}, NRC 0x{nrc:02X} — {description}")]
+    UdsNegativeResponse {
+        service_id: u8,
+        nrc: u8,
+        description: String,
+    },
+
+    #[error("Unknown ECU: {name}")]
+    UnknownEcu { name: String },
+
     #[error("Response timeout after {timeout_ms}ms")]
     Timeout { timeout_ms: u64 },
 

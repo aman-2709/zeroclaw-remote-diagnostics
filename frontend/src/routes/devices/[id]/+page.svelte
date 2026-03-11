@@ -217,6 +217,10 @@
 						<dd class="mt-1 font-mono text-sm">{device.certificate_id ?? 'None'}</dd>
 					</div>
 					<div class="rounded-lg border border-border bg-white p-4">
+						<dt class="text-xs font-medium uppercase text-text-muted">Machine ID</dt>
+						<dd class="mt-1 font-mono text-sm">{typeof device.metadata?.machine_id === 'string' ? device.metadata.machine_id : 'Not available'}</dd>
+					</div>
+					<div class="rounded-lg border border-border bg-white p-4">
 						<dt class="text-xs font-medium uppercase text-text-muted">Created</dt>
 						<dd class="mt-1 text-sm">{new Date(device.created_at).toLocaleDateString()}</dd>
 					</div>
