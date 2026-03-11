@@ -187,7 +187,41 @@ Fix: "which application is consuming CPU?" failed because no rule-based pattern 
 - [x] Updated E2E tests (tool count assertions, inference path tests)
 - [x] 535 tests passing (up from 452), clippy clean, fmt clean
 
+## Phase 17: DTC Description Database
+Embed Wal33D/dtc-database (18,805 codes, MIT) + UDS Failure Type Byte decoder.
+See docs/future-implementation.md for full research.
+
+- [ ] Download and parse Wal33D/dtc-database source `.txt` files
+- [ ] Create `dtc_descriptions.rs` — static lookup: code → description (generic)
+- [ ] Create `dtc_descriptions_mfr.rs` — (code, manufacturer) → description
+- [ ] Create `ftb.rs` — Failure Type Byte decoder (~40 entries)
+- [ ] Integrate into `read_dtcs` tool response (OBD-II DTCs)
+- [ ] Integrate into `read_uds_dtcs` tool response (UDS DTCs with FTB)
+- [ ] Update frontend to display DTC descriptions alongside codes
+- [ ] Tests for encoding/decoding, FTB lookup, description coverage
+
+## Phase 18: Clear DTCs Tool
+- [ ] Safety review: require confirmation parameter (`"confirm": true`)
+- [ ] OBD-II Mode 0x04 — `clear_dtcs` tool
+- [ ] UDS Service 0x14 — `clear_uds_dtcs` tool (selective clearing by group)
+- [ ] Add 0x04/0x14 to safety allowlist (with confirmation gate)
+- [ ] Rule engine + Bedrock patterns for clear commands
+
+## Phase 19: Expanded PID Coverage (8 → 200+)
+- [ ] Create `pid_database.rs` — static PID catalog with formulas and units
+- [ ] PID formula engine (runtime evaluation of `(256*A + B) / 4` expressions)
+- [ ] Update `read_pid` to accept any supported PID
+- [ ] Unit conversion (metric/imperial)
+
+## Phase 20: VIN Decoder (NHTSA VPIC, public domain)
+- [ ] Offline VPIC SQLite database
+- [ ] WMI lookup, SAE J287 checksum, pattern matching
+- [ ] Update `read_vin` tool with decoded make/model/year/engine
+
 ## Later
 - [x] Wire SocketCanInterface to real socketcan (conditional on Linux + config.can_interface, graceful fallback to mock)
+- [ ] Advanced DTC features: pending (0x07), permanent (0x0A), status byte, I/M readiness, DTC snapshots
+- [ ] Fleet-wide DTC aggregation, trend analysis, AI interpretation
+- [ ] DBC file parser for CAN signal-level decode
 - [ ] REST API auth middleware (JWT or API keys)
 - [ ] Deployment pipeline (Lambda handler, CI/CD)
