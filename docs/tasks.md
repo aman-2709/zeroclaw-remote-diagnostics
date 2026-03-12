@@ -191,29 +191,44 @@ Fix: "which application is consuming CPU?" failed because no rule-based pattern 
 Embed Wal33D/dtc-database (18,805 codes, MIT) + UDS Failure Type Byte decoder.
 See docs/future-implementation.md for full research.
 
-- [ ] Download and parse Wal33D/dtc-database source `.txt` files
-- [ ] Create `dtc_descriptions.rs` — static lookup: code → description (generic)
-- [ ] Create `dtc_descriptions_mfr.rs` — (code, manufacturer) → description
-- [ ] Create `ftb.rs` — Failure Type Byte decoder (~40 entries)
-- [ ] Integrate into `read_dtcs` tool response (OBD-II DTCs)
-- [ ] Integrate into `read_uds_dtcs` tool response (UDS DTCs with FTB)
-- [ ] Update frontend to display DTC descriptions alongside codes
-- [ ] Tests for encoding/decoding, FTB lookup, description coverage
+- [x] Data prep script: `scripts/prepare_dtc_data.py` — downloads Wal33D SQLite DB, extracts TSV (pinned commit SHA, metadata headers)
+- [x] TSV data: 9,415 generic + 9,390 manufacturer codes in `crates/zc-canbus-tools/data/`
+- [x] Rewrite `dtc_db.rs` — `include_str!` + `LazyLock<HashMap>`, generic + manufacturer lookup, severity heuristic
+- [x] Create `ftb.rs` — Failure Type Byte decoder (~40 entries per ISO 14229-1 Annex D)
+- [x] Add `failure_type`, `raw_dtc`, `severity_source` fields to `DtcCode` in zc-protocol (backward-compatible)
+- [x] Update `read_uds_dtcs` — decode FTB, look up descriptions, preserve raw 3-byte DTC, 5-char code format
+- [x] Verify `read_dtcs` — works with new database, populates severity_source
+- [x] Wire `pub mod ftb` into `lib.rs`
+- [x] Add frontend TypeScript types: `DtcCode`, `DtcSeverity`, `DtcCategory` interfaces
+- [x] Add DTC-aware rendering in CommandForm: severity-colored cards, description, failure type, raw hex, category labels
+- [x] Tests: dtc_db (generic/mfr lookup, severity inference, data integrity, duplicate detection), ftb (known/reserved/format), protocol (roundtrip, omission, backward compat), UDS tool (FTB decode, 5-char code, heuristic severity)
+- [x] Update docs: CLAUDE.md (status, tool counts), architecture.md (DtcCode struct, tool table, DTC DB description), future-implementation.md (Phase 17 done, gap table updated)
+- [x] 564 tests passing, clippy clean, fmt clean, svelte-check clean
 
-## Phase 18: Clear DTCs Tool
+## Phase 18: ECU Wakeup + UDS Robustness
+BCR requires vehicle speed wakeup (CAN 0x98) before responding to UDS. Generic ECUs unaffected.
+
+- [x] Add optional `WakeupConfig` to `EcuProfile` (CAN ID, frame data generator, interval, repeat count)
+- [x] Implement vehicle speed wakeup for Hella BCR (CRC-protected 0x98 frames, 80ms interval, 16 CRC × 2 cycles)
+- [x] Execute wakeup automatically in `uds_query`/`uds_query_isotp` when profile has wakeup config
+- [x] Add NRC 0x78 ("response pending") retry logic in UDS query layer (generic, all ECUs)
+- [x] Tests: wakeup frame generation, wakeup execution before UDS, NRC 0x78 retry, profiles without wakeup unaffected
+- [ ] Deploy to S32G and verify BCR DTC reads succeed end-to-end via frontend
+
+## Phase 19: Clear DTCs Tool (was 18)
 - [ ] Safety review: require confirmation parameter (`"confirm": true`)
 - [ ] OBD-II Mode 0x04 — `clear_dtcs` tool
 - [ ] UDS Service 0x14 — `clear_uds_dtcs` tool (selective clearing by group)
 - [ ] Add 0x04/0x14 to safety allowlist (with confirmation gate)
 - [ ] Rule engine + Bedrock patterns for clear commands
 
-## Phase 19: Expanded PID Coverage (8 → 200+)
+## Phase 20: Expanded PID Coverage (8 → 200+)
 - [ ] Create `pid_database.rs` — static PID catalog with formulas and units
 - [ ] PID formula engine (runtime evaluation of `(256*A + B) / 4` expressions)
 - [ ] Update `read_pid` to accept any supported PID
 - [ ] Unit conversion (metric/imperial)
 
-## Phase 20: VIN Decoder (NHTSA VPIC, public domain)
+## Phase 21: VIN Decoder (NHTSA VPIC, public domain)
 - [ ] Offline VPIC SQLite database
 - [ ] WMI lookup, SAE J287 checksum, pattern matching
 - [ ] Update `read_vin` tool with decoded make/model/year/engine

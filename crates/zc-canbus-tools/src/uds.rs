@@ -20,6 +20,12 @@ const POSITIVE_RESPONSE_OFFSET: u8 = 0x40;
 /// UDS negative response service ID.
 const NEGATIVE_RESPONSE_SID: u8 = 0x7F;
 
+/// NRC 0x78: Request correctly received, response pending.
+const NRC_RESPONSE_PENDING: u8 = 0x78;
+
+/// Maximum number of NRC 0x78 retries before giving up.
+const MAX_PENDING_RETRIES: u8 = 10;
+
 // ── Request builders ─────────────────────────────────────────────
 
 /// Build a UDS single-frame request for a given ECU profile.
@@ -59,11 +65,43 @@ pub fn build_tester_present(profile: &EcuProfile) -> CanFrame {
     build_uds_request(profile, 0x3E, &[0x00])
 }
 
+// ── ECU wakeup ──────────────────────────────────────────────────
+
+/// Execute the wakeup sequence for an ECU profile, if one is configured.
+///
+/// Sends all wakeup frames with the configured interval between them.
+/// ECUs without a wakeup config (e.g., BCF) are a no-op.
+pub async fn execute_wakeup(iface: &dyn CanInterface, profile: &EcuProfile) -> CanResult<()> {
+    let Some(ref wakeup) = profile.wakeup else {
+        return Ok(());
+    };
+
+    let frames = (wakeup.frame_generator)();
+    let interval = Duration::from_millis(wakeup.interval_ms);
+
+    tracing::info!(
+        ecu = profile.name,
+        frames = frames.len(),
+        interval_ms = wakeup.interval_ms,
+        "sending ECU wakeup sequence"
+    );
+
+    for frame in &frames {
+        iface.send_frame(frame).await?;
+        tokio::time::sleep(interval).await;
+    }
+
+    tracing::info!(ecu = profile.name, "wakeup sequence complete");
+    Ok(())
+}
+
 // ── Send + receive ───────────────────────────────────────────────
 
 /// Send a UDS request and collect the single-frame response.
 ///
+/// Executes the ECU wakeup sequence (if configured) before the first request.
 /// Validates the service ID against the UDS safety allowlist before sending.
+/// Retries on NRC 0x78 ("response pending") up to `MAX_PENDING_RETRIES` times.
 pub async fn uds_query(
     iface: &dyn CanInterface,
     profile: &EcuProfile,
@@ -79,6 +117,9 @@ pub async fn uds_query(
         });
     }
 
+    // Wakeup ECU if required (e.g., Hella BCR needs vehicle speed on 0x98)
+    execute_wakeup(iface, profile).await?;
+
     iface.drain_rx_buffer().await;
 
     let request = build_uds_request(profile, service_id, data);
@@ -86,53 +127,70 @@ pub async fn uds_query(
 
     // Loop to skip unrelated CAN traffic until we get a frame from the
     // expected ECU response ID, or timeout expires.
+    // Retries on NRC 0x78 ("response pending").
+    let mut pending_retries = 0u8;
     let deadline = std::time::Instant::now() + timeout;
-    let response = loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(CanError::Timeout {
-                timeout_ms: timeout.as_millis() as u64,
+
+    loop {
+        let response = loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(CanError::Timeout {
+                    timeout_ms: timeout.as_millis() as u64,
+                });
+            }
+            let frame = iface.recv_frame(remaining).await?;
+            if frame.id == profile.response_id {
+                break frame;
+            }
+        };
+
+        // Extract payload from ISO-TP single frame
+        let pci_len = (response.data[0] & 0x0F) as usize;
+        if pci_len == 0 || pci_len + 1 > response.data.len() {
+            return Err(CanError::Protocol("invalid UDS response frame".into()));
+        }
+
+        let payload = &response.data[1..1 + pci_len];
+
+        // Check for negative response
+        if let Some((sid, nrc)) = is_negative_response(payload) {
+            // NRC 0x78: ECU needs more time — wait for the real response
+            if nrc == NRC_RESPONSE_PENDING && pending_retries < MAX_PENDING_RETRIES {
+                pending_retries += 1;
+                tracing::debug!(
+                    ecu = profile.name,
+                    retry = pending_retries,
+                    "NRC 0x78: response pending, waiting for final response"
+                );
+                continue;
+            }
+            return Err(CanError::UdsNegativeResponse {
+                service_id: sid,
+                nrc,
+                description: nrc_description(nrc).to_string(),
             });
         }
-        let frame = iface.recv_frame(remaining).await?;
-        if frame.id == profile.response_id {
-            break frame;
+
+        // Verify positive response SID
+        let expected_sid = service_id + POSITIVE_RESPONSE_OFFSET;
+        if payload[0] != expected_sid {
+            return Err(CanError::Protocol(format!(
+                "expected positive response SID 0x{expected_sid:02X}, got 0x{:02X}",
+                payload[0]
+            )));
         }
-    };
 
-    // Extract payload from ISO-TP single frame
-    let pci_len = (response.data[0] & 0x0F) as usize;
-    if pci_len == 0 || pci_len + 1 > response.data.len() {
-        return Err(CanError::Protocol("invalid UDS response frame".into()));
+        // Return payload after the positive response SID
+        return Ok(payload[1..].to_vec());
     }
-
-    let payload = &response.data[1..1 + pci_len];
-
-    // Check for negative response
-    if let Some((sid, nrc)) = is_negative_response(payload) {
-        return Err(CanError::UdsNegativeResponse {
-            service_id: sid,
-            nrc,
-            description: nrc_description(nrc).to_string(),
-        });
-    }
-
-    // Verify positive response SID
-    let expected_sid = service_id + POSITIVE_RESPONSE_OFFSET;
-    if payload[0] != expected_sid {
-        return Err(CanError::Protocol(format!(
-            "expected positive response SID 0x{expected_sid:02X}, got 0x{:02X}",
-            payload[0]
-        )));
-    }
-
-    // Return payload after the positive response SID
-    Ok(payload[1..].to_vec())
 }
 
 /// Send a UDS request and reassemble a multi-frame ISO-TP response.
 ///
+/// Executes the ECU wakeup sequence (if configured) before the first request.
 /// Uses the ECU profile's CAN IDs instead of hardcoded OBD-II IDs.
+/// Retries on NRC 0x78 ("response pending") up to `MAX_PENDING_RETRIES` times.
 pub async fn uds_query_isotp(
     iface: &dyn CanInterface,
     profile: &EcuProfile,
@@ -148,6 +206,9 @@ pub async fn uds_query_isotp(
         });
     }
 
+    // Wakeup ECU if required (e.g., Hella BCR needs vehicle speed on 0x98)
+    execute_wakeup(iface, profile).await?;
+
     iface.drain_rx_buffer().await;
 
     let request = build_uds_request(profile, service_id, data);
@@ -155,6 +216,8 @@ pub async fn uds_query_isotp(
 
     // Loop to skip unrelated CAN traffic until we get a frame from the
     // expected ECU response ID, or timeout expires.
+    // Retries on NRC 0x78 ("response pending").
+    let mut pending_retries = 0u8;
     let deadline = std::time::Instant::now() + timeout;
     let first = loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -164,9 +227,31 @@ pub async fn uds_query_isotp(
             });
         }
         let frame = iface.recv_frame(remaining).await?;
-        if frame.id == profile.response_id {
-            break frame;
+        if frame.id != profile.response_id {
+            continue;
         }
+
+        // Check for NRC 0x78 in single-frame negative responses
+        let ft = (frame.data[0] >> 4) & 0x0F;
+        if ft == ISOTP_SF {
+            let len = (frame.data[0] & 0x0F) as usize;
+            if len >= 3
+                && let Some(payload) = frame.data.get(1..1 + len)
+                && let Some((_sid, nrc)) = is_negative_response(payload)
+                && nrc == NRC_RESPONSE_PENDING
+                && pending_retries < MAX_PENDING_RETRIES
+            {
+                pending_retries += 1;
+                tracing::debug!(
+                    ecu = profile.name,
+                    retry = pending_retries,
+                    "NRC 0x78: response pending, waiting for final response"
+                );
+                continue;
+            }
+        }
+
+        break frame;
     };
 
     let frame_type = (first.data[0] >> 4) & 0x0F;
@@ -179,7 +264,7 @@ pub async fn uds_query_isotp(
             }
             let payload = &first.data[1..1 + len];
 
-            // Check for negative response
+            // Check for negative response (non-0x78, since 0x78 was handled above)
             if let Some((sid, nrc)) = is_negative_response(payload) {
                 return Err(CanError::UdsNegativeResponse {
                     service_id: sid,
@@ -295,7 +380,7 @@ pub fn nrc_description(nrc: u8) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ecu_profile::HELLA_BCR;
+    use crate::ecu_profile::{HELLA_BCF, HELLA_BCR};
     use crate::mock::MockCanInterface;
 
     // ── Request builder tests ────────────────────────────────────
@@ -409,10 +494,13 @@ mod tests {
         // Should return payload after positive SID: [FD, 05, 04, CA]
         assert_eq!(result, vec![0xFD, 0x05, 0x04, 0xCA]);
 
-        // Verify the request was sent correctly
+        // Verify wakeup + request were sent (32 wakeup frames + 1 UDS request)
         let sent = mock.sent_frames();
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].id, 0x60D);
+        assert_eq!(sent.len(), 33); // 16 CRC values × 2 cycles + 1 UDS request
+        // First 32 frames are wakeup on CAN ID 0x98
+        assert!(sent[..32].iter().all(|f| f.id == 0x98));
+        // Last frame is the UDS request on 0x60D
+        assert_eq!(sent[32].id, 0x60D);
     }
 
     #[tokio::test]
@@ -540,5 +628,84 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, CanError::UdsSafetyViolation { .. }));
+    }
+
+    // ── Wakeup tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn bcf_no_wakeup_frames_sent() {
+        let mock = MockCanInterface::new();
+        mock.queue_response(CanFrame::new(
+            0x589,
+            vec![0x02, 0x50, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ));
+
+        let _ = uds_query(&mock, &HELLA_BCF, 0x10, &[0x03], DEFAULT_UDS_TIMEOUT)
+            .await
+            .unwrap();
+
+        // BCF has no wakeup — only the UDS request should be sent
+        let sent = mock.sent_frames();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].id, 0x609);
+    }
+
+    #[tokio::test]
+    async fn wakeup_frames_correct_structure() {
+        let frames = crate::ecu_profile::bcr_wakeup_frames();
+        assert_eq!(frames.len(), 32); // 16 CRC × 2 cycles
+        for (i, frame) in frames.iter().enumerate() {
+            assert_eq!(frame.id, 0x98);
+            assert_eq!(frame.data.len(), 8);
+            let counter = (i % 16) as u8;
+            assert_eq!(frame.data[1], counter);
+            assert_eq!(frame.data[6], 0x20);
+        }
+    }
+
+    // ── NRC 0x78 retry tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn uds_query_retries_on_nrc_0x78() {
+        let mock = MockCanInterface::new();
+        // First response: NRC 0x78 (response pending)
+        mock.queue_response(CanFrame::new(
+            0x589,
+            vec![0x03, 0x7F, 0x22, 0x78, 0x00, 0x00, 0x00, 0x00],
+        ));
+        // Second response: positive
+        mock.queue_response(CanFrame::new(
+            0x589,
+            vec![0x05, 0x62, 0xFD, 0x05, 0x04, 0xCA, 0x00, 0x00],
+        ));
+
+        // Use BCF (no wakeup) to keep the test simple
+        let result = uds_query(&mock, &HELLA_BCF, 0x22, &[0xFD, 0x05], DEFAULT_UDS_TIMEOUT)
+            .await
+            .unwrap();
+
+        assert_eq!(result, vec![0xFD, 0x05, 0x04, 0xCA]);
+    }
+
+    #[tokio::test]
+    async fn uds_query_isotp_retries_on_nrc_0x78() {
+        let mock = MockCanInterface::new();
+        // First response: NRC 0x78 (response pending) — single frame
+        mock.queue_response(CanFrame::new(
+            0x589,
+            vec![0x03, 0x7F, 0x19, 0x78, 0x00, 0x00, 0x00, 0x00],
+        ));
+        // Second response: positive SF
+        mock.queue_response(CanFrame::new(
+            0x589,
+            vec![0x05, 0x59, 0x02, 0xFF, 0x00, 0x00, 0x00, 0x00],
+        ));
+
+        let result = uds_query_isotp(&mock, &HELLA_BCF, 0x19, &[0x02, 0xFF], DEFAULT_UDS_TIMEOUT)
+            .await
+            .unwrap();
+
+        // Returns full payload including positive response SID
+        assert_eq!(result, vec![0x59, 0x02, 0xFF, 0x00, 0x00]);
     }
 }

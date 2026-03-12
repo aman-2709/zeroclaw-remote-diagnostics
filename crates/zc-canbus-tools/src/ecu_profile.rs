@@ -1,8 +1,10 @@
 //! ECU profile definitions for UDS-capable ECUs.
 //!
-//! Each profile specifies CAN IDs, bitrate, known DIDs, and decoding rules
-//! for a specific ECU type. Profiles are statically defined and looked up
-//! by name at runtime.
+//! Each profile specifies CAN IDs, bitrate, known DIDs, wakeup sequences,
+//! and decoding rules for a specific ECU type. Profiles are statically
+//! defined and looked up by name at runtime.
+
+use crate::types::CanFrame;
 
 /// An ECU's communication profile for UDS diagnostics.
 #[derive(Debug, Clone)]
@@ -19,6 +21,22 @@ pub struct EcuProfile {
     pub can_interface: &'static str,
     /// Known DIDs for this ECU.
     pub known_dids: &'static [DidEntry],
+    /// Optional wakeup sequence to send before UDS requests.
+    /// Some ECUs (e.g., Hella BCR) enter power-saving mode and require
+    /// specific CAN messages to wake up before they respond to diagnostics.
+    pub wakeup: Option<WakeupConfig>,
+}
+
+/// Configuration for an ECU wakeup sequence.
+///
+/// Generates a series of CAN frames that must be sent before UDS requests
+/// to bring the ECU out of power-saving mode.
+#[derive(Debug, Clone)]
+pub struct WakeupConfig {
+    /// Function that generates the wakeup CAN frames.
+    pub frame_generator: fn() -> Vec<CanFrame>,
+    /// Interval between frames in milliseconds.
+    pub interval_ms: u64,
 }
 
 /// A single Data Identifier (DID) known to live on an ECU.
@@ -95,6 +113,46 @@ pub fn decode_did_value(decoder: &DidDecoder, data: &[u8]) -> serde_json::Value 
     }
 }
 
+// ── Hella BCR wakeup: Vehicle Speed (CAN 0x98) ──────────────────
+
+/// CAN ID for the vehicle speed wakeup message.
+const VEHICLE_SPEED_CAN_ID: u32 = 0x98;
+
+/// CRC lookup table for vehicle speed wakeup frames.
+/// From Hella esync-bc-flasher-tools `vehicle_speed.c`.
+const VEHICLE_SPEED_CRC: [u8; 16] = [
+    0x35, 0x6A, 0x68, 0xD1, 0x6C, 0xD0, 0xD2, 0x6B, 0x87, 0xD8, 0xDA, 0x63, 0xDE, 0xEA, 0x9B, 0x51,
+];
+
+/// Number of times to cycle through all 16 CRC values.
+const VEHICLE_SPEED_CYCLES: u8 = 2;
+
+/// Generate the Hella BCR vehicle speed wakeup frames.
+///
+/// Each frame: `[CRC[i], counter, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00]`
+/// on CAN ID 0x98. Cycles through 16 CRC values, repeated `VEHICLE_SPEED_CYCLES` times.
+pub fn bcr_wakeup_frames() -> Vec<CanFrame> {
+    let mut frames = Vec::with_capacity(16 * VEHICLE_SPEED_CYCLES as usize);
+    for _ in 0..VEHICLE_SPEED_CYCLES {
+        for i in 0u8..16 {
+            frames.push(CanFrame::new(
+                VEHICLE_SPEED_CAN_ID,
+                vec![
+                    VEHICLE_SPEED_CRC[i as usize],
+                    i,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x20,
+                    0x00,
+                ],
+            ));
+        }
+    }
+    frames
+}
+
 // ── Hella BCR (Body Control Rear) ────────────────────────────────
 
 // PLACEHOLDER — replace with actual DID from esync_hella_diag_codes.h
@@ -137,6 +195,10 @@ pub static HELLA_BCR: EcuProfile = EcuProfile {
     bitrate_kbps: 250,
     can_interface: "can0",
     known_dids: BCR_DIDS,
+    wakeup: Some(WakeupConfig {
+        frame_generator: bcr_wakeup_frames,
+        interval_ms: 80,
+    }),
 };
 
 // ── Hella BCF (Body Control Front) ──────────────────────────────
@@ -169,6 +231,7 @@ pub static HELLA_BCF: EcuProfile = EcuProfile {
     bitrate_kbps: 250,
     can_interface: "can0",
     known_dids: BCF_DIDS,
+    wakeup: None,
 };
 
 // ── Profile registry ─────────────────────────────────────────────
