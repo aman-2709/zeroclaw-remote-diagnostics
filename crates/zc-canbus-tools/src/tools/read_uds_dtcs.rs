@@ -5,8 +5,10 @@ use std::time::Duration;
 
 use zc_protocol::dtc::{DtcCode, DtcSeverity};
 
+use crate::dtc_db;
 use crate::ecu_profile;
 use crate::error::{CanError, CanResult};
+use crate::ftb;
 use crate::interface::CanInterface;
 use crate::obd;
 use crate::types::{CanTool, ToolResult};
@@ -81,8 +83,6 @@ impl CanTool for ReadUdsDtcs {
 
         // Response payload from ISO-TP (includes positive response SID):
         // [0x59, sub_fn, status_availability_mask, DTC_hi, DTC_mid, DTC_lo, status, ...]
-        // UDS DTCs are 3 bytes (not 2 like OBD-II), but we also support
-        // 2-byte DTCs decoded via obd::decode_dtc_bytes for compatibility.
         let mut dtcs = Vec::new();
 
         if response_data.len() >= 3 {
@@ -94,7 +94,7 @@ impl CanTool for ReadUdsDtcs {
             while i + 3 < dtc_data.len() {
                 let dtc_hi = dtc_data[i];
                 let dtc_mid = dtc_data[i + 1];
-                let dtc_lo = dtc_data[i + 2];
+                let dtc_lo = dtc_data[i + 2]; // Failure Type Byte
                 let _status = dtc_data[i + 3];
 
                 // Skip padding (all zeros)
@@ -103,19 +103,31 @@ impl CanTool for ReadUdsDtcs {
                     continue;
                 }
 
-                // Decode using OBD-II 2-byte format (hi, mid) as primary code,
-                // with lo byte appended as hex suffix
-                let base_code = obd::decode_dtc_bytes(dtc_hi, dtc_mid);
-                let code = match base_code {
-                    Some(c) => format!("{c}{dtc_lo:02X}"),
-                    None => format!("{dtc_hi:02X}{dtc_mid:02X}{dtc_lo:02X}"),
-                };
+                // Preserve raw 3-byte DTC value
+                let raw_dtc = format!("{dtc_hi:02X}{dtc_mid:02X}{dtc_lo:02X}");
+
+                // Decode first 2 bytes → standard 5-char OBD-style code
+                let code = obd::decode_dtc_bytes(dtc_hi, dtc_mid)
+                    .unwrap_or_else(|| format!("{dtc_hi:02X}{dtc_mid:02X}"));
+
+                // Decode 3rd byte → Failure Type Byte description
+                let failure_type = ftb::format_ftb(dtc_lo);
+
+                // Look up description and severity from database
+                let (description, severity, severity_source): (Option<String>, DtcSeverity, &str) =
+                    match dtc_db::lookup(&code) {
+                        Some(entry) => (Some(entry.description), entry.severity, "database"),
+                        None => (None, dtc_db::infer_severity(&code), "heuristic"),
+                    };
 
                 dtcs.push(DtcCode {
                     code: code.clone(),
                     category: DtcCode::parse_category(&code),
-                    severity: DtcSeverity::Unknown,
-                    description: None,
+                    severity,
+                    severity_source: Some(severity_source.to_string()),
+                    description,
+                    failure_type: Some(failure_type),
+                    raw_dtc: Some(raw_dtc),
                     mil_status: false,
                     freeze_frame: None,
                 });
@@ -127,7 +139,16 @@ impl CanTool for ReadUdsDtcs {
         let summary = if dtcs.is_empty() {
             format!("No DTCs found on {}", profile.name)
         } else {
-            let codes: Vec<&str> = dtcs.iter().map(|d| d.code.as_str()).collect();
+            let codes: Vec<String> = dtcs
+                .iter()
+                .map(|d| {
+                    if let Some(desc) = &d.description {
+                        format!("{} ({})", d.code, desc)
+                    } else {
+                        d.code.clone()
+                    }
+                })
+                .collect();
             format!(
                 "Found {} DTC(s) on {}: {}",
                 dtcs.len(),
@@ -150,11 +171,11 @@ mod tests {
     #[tokio::test]
     async fn read_bcr_dtcs_success() {
         let mock = MockCanInterface::new();
-        // ISO-TP single-frame: PCI=0x07, payload: 0x59 0x02 0xFF + one DTC (03 00 00, status 0x09)
-        // uds_query_isotp returns the full payload [0x59, 0x02, 0xFF, 0x03, 0x00, 0x00, 0x09]
+        // ISO-TP single-frame: PCI=0x07, payload: 0x59 0x02 0xFF + one DTC (03 00 42, status 0x09)
+        // dtc_hi=0x03, dtc_mid=0x00 → P0300, dtc_lo=0x42 → FTB "General Checksum Failure"
         mock.queue_response(CanFrame::new(
             0x58D,
-            vec![0x07, 0x59, 0x02, 0xFF, 0x03, 0x00, 0x00, 0x09],
+            vec![0x07, 0x59, 0x02, 0xFF, 0x03, 0x00, 0x42, 0x09],
         ));
 
         let args = serde_json::json!({"ecu": "BCR"});
@@ -164,6 +185,43 @@ mod tests {
         let summary = result.summary.unwrap();
         assert!(summary.contains("1 DTC"));
         assert!(summary.contains("BCR"));
+
+        // Verify the DTC structure
+        let data = result.data.unwrap();
+        let dtcs: Vec<serde_json::Value> = serde_json::from_value(data).unwrap();
+        assert_eq!(dtcs.len(), 1);
+
+        let dtc = &dtcs[0];
+        // Code should be 5-char standard format (not 7-char with appended FTB)
+        assert_eq!(dtc["code"], "P0300");
+        // FTB decoded
+        assert_eq!(dtc["failure_type"], "General Checksum Failure");
+        // Raw bytes preserved
+        assert_eq!(dtc["raw_dtc"], "030042");
+        // Description from database
+        assert!(dtc["description"].as_str().unwrap().contains("Misfire"));
+        // Severity from database
+        assert_eq!(dtc["severity"], "critical");
+        assert_eq!(dtc["severity_source"], "database");
+    }
+
+    #[tokio::test]
+    async fn read_bcr_dtc_with_ftb() {
+        let mock = MockCanInterface::new();
+        // DTC: dtc_hi=0x03, dtc_mid=0x00, dtc_lo=0x07 → P0300, FTB=Circuit Short to Ground
+        mock.queue_response(CanFrame::new(
+            0x58D,
+            vec![0x07, 0x59, 0x02, 0xFF, 0x03, 0x00, 0x07, 0x09],
+        ));
+
+        let args = serde_json::json!({"ecu": "BCR"});
+        let result = ReadUdsDtcs.execute(args, &mock).await.unwrap();
+        assert!(result.success);
+
+        let data = result.data.unwrap();
+        let dtcs: Vec<serde_json::Value> = serde_json::from_value(data).unwrap();
+        assert_eq!(dtcs[0]["failure_type"], "Circuit Short to Ground");
+        assert_eq!(dtcs[0]["raw_dtc"], "030007");
     }
 
     #[tokio::test]
@@ -199,5 +257,45 @@ mod tests {
         let result = ReadUdsDtcs.execute(args, &mock).await;
 
         assert!(matches!(result, Err(CanError::UnknownEcu { .. })));
+    }
+
+    #[tokio::test]
+    async fn uds_dtc_code_is_five_chars() {
+        let mock = MockCanInterface::new();
+        // P0171 (0x01, 0x71) with FTB 0x11
+        mock.queue_response(CanFrame::new(
+            0x58D,
+            vec![0x07, 0x59, 0x02, 0xFF, 0x01, 0x71, 0x11, 0x09],
+        ));
+
+        let args = serde_json::json!({"ecu": "BCR"});
+        let result = ReadUdsDtcs.execute(args, &mock).await.unwrap();
+
+        let data = result.data.unwrap();
+        let dtcs: Vec<serde_json::Value> = serde_json::from_value(data).unwrap();
+        let code = dtcs[0]["code"].as_str().unwrap();
+        // Must be exactly 5 chars (not 7 with appended FTB hex)
+        assert_eq!(code.len(), 5, "code should be 5 chars, got: {code}");
+        assert_eq!(code, "P0171");
+    }
+
+    #[tokio::test]
+    async fn uds_dtc_unknown_code_gets_heuristic_severity() {
+        let mock = MockCanInterface::new();
+        // Use an obscure code unlikely to be in database: P3FFF (0x3F, 0xFF)
+        mock.queue_response(CanFrame::new(
+            0x58D,
+            vec![0x07, 0x59, 0x02, 0xFF, 0x3F, 0xFF, 0x00, 0x09],
+        ));
+
+        let args = serde_json::json!({"ecu": "BCR"});
+        let result = ReadUdsDtcs.execute(args, &mock).await.unwrap();
+
+        let data = result.data.unwrap();
+        let dtcs: Vec<serde_json::Value> = serde_json::from_value(data).unwrap();
+        // Should have severity_source = "heuristic" and no description
+        let dtc = &dtcs[0];
+        assert_eq!(dtc["severity_source"], "heuristic");
+        assert!(dtc.get("description").is_none() || dtc["description"].is_null());
     }
 }

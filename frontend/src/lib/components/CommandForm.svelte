@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import type { CommandEnvelope, WsEvent } from '$lib/types';
+	import type { CommandEnvelope, WsEvent, DtcCode } from '$lib/types';
 	import { wsStore } from '$lib/stores/websocket.svelte';
 	import { onMount } from 'svelte';
 
@@ -171,6 +171,61 @@
 		if (!Array.isArray(entries)) return null;
 		return entries.map((e: Record<string, unknown>) => e.message as string).filter(Boolean);
 	}
+
+	function extractDtcs(data: unknown): DtcCode[] | null {
+		if (!data || typeof data !== 'object') return null;
+		const obj = data as Record<string, unknown>;
+		// ToolResult wraps the DTC array in .data
+		const inner = obj.data;
+		if (!Array.isArray(inner)) return null;
+		// Empty DTC array is valid (no fault codes found)
+		if (inner.length === 0) return [];
+		// Check if first element looks like a DTC
+		const first = inner[0] as Record<string, unknown>;
+		if (typeof first.code !== 'string' || typeof first.category !== 'string') return null;
+		return inner as DtcCode[];
+	}
+
+	function severityColor(severity: string): string {
+		switch (severity) {
+			case 'critical':
+				return 'text-danger';
+			case 'warning':
+				return 'text-warning';
+			case 'info':
+				return 'text-primary';
+			default:
+				return 'text-text-muted';
+		}
+	}
+
+	function severityBg(severity: string): string {
+		switch (severity) {
+			case 'critical':
+				return 'border-danger/30 bg-danger/5';
+			case 'warning':
+				return 'border-warning/30 bg-warning/5';
+			case 'info':
+				return 'border-primary/30 bg-primary/5';
+			default:
+				return 'border-border bg-surface';
+		}
+	}
+
+	function categoryLabel(cat: string): string {
+		switch (cat) {
+			case 'powertrain':
+				return 'Powertrain';
+			case 'chassis':
+				return 'Chassis';
+			case 'body':
+				return 'Body';
+			case 'network':
+				return 'Network';
+			default:
+				return cat;
+		}
+	}
 </script>
 
 <form onsubmit={handleSubmit} class="space-y-3">
@@ -250,11 +305,47 @@
 
 			{#if responseData}
 				{@const logLines = formatEntries(responseData)}
+				{@const dtcs = extractDtcs(responseData)}
 				{#if logLines}
 					<details class="mt-2 rounded border border-border bg-surface p-2 text-xs" open>
 						<summary class="cursor-pointer font-medium text-text-muted">Log Entries ({logLines.length})</summary>
 						<pre class="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-text leading-relaxed">{logLines.join('\n')}</pre>
 					</details>
+				{:else if dtcs}
+					<div class="mt-2 space-y-2 text-xs">
+						{#if dtcs.length === 0}
+							<div class="rounded border border-success/30 bg-success/5 p-2 text-success font-medium">
+								No diagnostic trouble codes found
+							</div>
+						{:else}
+							<div class="font-medium text-text-muted">{dtcs.length} DTC{dtcs.length === 1 ? '' : 's'} found:</div>
+							{#each dtcs as dtc}
+								<div class="rounded border p-2 {severityBg(dtc.severity)}">
+									<div class="flex items-center gap-2">
+										<span class="font-mono font-bold {severityColor(dtc.severity)}">{dtc.code}</span>
+										<span class="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {severityColor(dtc.severity)} bg-black/5">{dtc.severity}</span>
+										<span class="text-text-muted">{categoryLabel(dtc.category)}</span>
+										{#if dtc.severity_source === 'heuristic'}
+											<span class="text-text-muted italic">(heuristic)</span>
+										{/if}
+									</div>
+									{#if dtc.description}
+										<div class="mt-1 text-text">{dtc.description}</div>
+									{/if}
+									{#if dtc.failure_type}
+										<div class="mt-0.5 text-text-muted">
+											Failure type: <span class="font-mono">{dtc.failure_type}</span>
+										</div>
+									{/if}
+									{#if dtc.raw_dtc}
+										<div class="mt-0.5 text-text-muted">
+											Raw: <span class="font-mono">0x{dtc.raw_dtc}</span>
+										</div>
+									{/if}
+								</div>
+							{/each}
+						{/if}
+					</div>
 				{:else}
 					<details class="mt-2 rounded border border-border bg-surface p-2 text-xs">
 						<summary class="cursor-pointer font-medium text-text-muted">Response Data</summary>

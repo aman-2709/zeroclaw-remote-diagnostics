@@ -266,12 +266,15 @@ pub struct SystemMetrics {
 
 ```rust
 pub struct DtcCode {
-    pub code: String,                      // "P0300", "C0035"
-    pub category: DtcCategory,             // Powertrain|Chassis|Body|Network
-    pub severity: DtcSeverity,             // Info|Warning|Critical|Unknown
-    pub description: Option<String>,       // From compile-time ~5000-code database
-    pub mil_status: bool,                  // Check engine light on?
-    pub freeze_frame: Option<FreezeFrame>, // Engine state at fault time
+    pub code: String,                          // "P0300", "C0035"
+    pub category: DtcCategory,                 // Powertrain|Chassis|Body|Network
+    pub severity: DtcSeverity,                 // Info|Warning|Critical|Unknown
+    pub severity_source: Option<String>,       // "database" or "heuristic"
+    pub description: Option<String>,           // From 18,805-code embedded database
+    pub failure_type: Option<String>,          // UDS FTB decoded (e.g., "Circuit Short to Ground")
+    pub raw_dtc: Option<String>,               // Raw 3-byte UDS DTC hex (e.g., "030007")
+    pub mil_status: bool,                      // Check engine light on?
+    pub freeze_frame: Option<FreezeFrame>,     // Engine state at fault time
 }
 ```
 
@@ -331,15 +334,18 @@ pub struct CanFrame {
 
 **Safety**: OBD-II modes 2, 5, 10, 14 are blocked (write modes). Only modes 1, 3, 4, 6, 9 (read-only) are permitted. ISO-TP flow control frames (`0x30`) are allowed to pass through.
 
-### 5 Tools
+### 8 Tools
 
 | Tool | Name | Args | Protocol | Returns |
 |------|------|------|----------|---------|
 | ReadPid | `read_pid` | `{"pid": "0x0C"}` | OBD-II mode 0x01 | Sensor value + unit |
-| ReadDtcs | `read_dtcs` | `{}` | OBD-II mode 0x03 | Array of DtcCode |
+| ReadDtcs | `read_dtcs` | `{}` | OBD-II mode 0x03 | Array of DtcCode (with descriptions) |
 | ReadVin | `read_vin` | `{}` | OBD-II mode 0x09 PID 0x02, ISO-TP multi-frame | 17-char VIN string |
 | ReadFreeze | `read_freeze` | `{}` | OBD-II mode 0x02 | FreezeFrame struct |
 | CanMonitor | `can_monitor` | `{"duration_secs": 10}` | Raw CAN receive loop | Array of timestamped frames |
+| ReadUdsDtcs | `read_uds_dtcs` | `{"ecu": "BCR"}` | UDS 0x19 + ISO-TP | Array of DtcCode (with FTB + descriptions) |
+| ReadUdsDid | `read_uds_did` | `{"ecu": "BCR", "did": "0xF190"}` | UDS 0x22 | DID value (hex or ASCII) |
+| UdsSessionControl | `uds_session_control` | `{"ecu": "BCR", "session": "extended"}` | UDS 0x10 / 0x3E | Session state |
 
 **Common PIDs:**
 
@@ -356,7 +362,7 @@ pub struct CanFrame {
 
 ### DTC Database
 
-~5000 DTC codes loaded at compile time from `dtc_db.rs`. Lookup by code string (e.g., "P0300" → "Random/Multiple Cylinder Misfire Detected", severity: Critical). `decode_dtc_bytes()` returns `None` for `0x00/0x00` padding bytes.
+18,805 DTC codes (9,415 generic + 9,390 manufacturer-specific) embedded at compile time from Wal33D/dtc-database (MIT). Data stored as TSV in `crates/zc-canbus-tools/data/`, parsed into `LazyLock<HashMap>` on first access (~1ms). Lookup by code string (e.g., "P0300" → "Random/Multiple Cylinder Misfire Detected") or by (code, manufacturer) for OEM-specific descriptions. Severity inferred by code pattern (conservative heuristic: only misfire, airbag, CAN bus off → Critical; default Warning). UDS DTCs also get Failure Type Byte decoding via `ftb.rs` (~40 entries per ISO 14229-1). `decode_dtc_bytes()` returns `None` for `0x00/0x00` padding bytes.
 
 ---
 

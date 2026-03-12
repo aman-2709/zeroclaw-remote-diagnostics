@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 6 complete — device shadow sync across edge and cloud
+**Status**: Phase 17 complete — DTC description database (18,805 codes) + UDS FTB decoder
 
 ## Task Tracking
 
@@ -120,8 +120,8 @@ cargo fmt --all -- --check   # check only
 ```
 crates/
   zc-protocol/       — Shared types: commands, telemetry, device, DTC, shadows, topics
-  zc-canbus-tools/   — CAN bus / OBD-II diagnostic tools (5 tools, trait-based)
-  zc-log-tools/      — Multi-format log parsing + 4 analysis tools
+  zc-canbus-tools/   — CAN bus / OBD-II / UDS diagnostic tools (8 tools, 18K DTC database, FTB decoder)
+  zc-log-tools/      — Multi-format log parsing + 5 analysis tools
   zc-mqtt-channel/   — MQTT channel abstraction for AWS IoT Core (mTLS)
   zc-fleet-agent/    — Edge agent binary (wires all crates + MQTT event loop)
   zc-cloud-api/      — Cloud API server (Axum REST, PostgreSQL/SQLx, WebSocket)

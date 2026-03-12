@@ -7,6 +7,7 @@
 pub mod dtc_db;
 pub mod ecu_profile;
 pub mod error;
+pub mod ftb;
 pub mod interface;
 pub mod mock;
 pub mod obd;

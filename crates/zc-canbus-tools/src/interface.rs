@@ -110,9 +110,8 @@ pub struct SocketCanInterface {
 impl SocketCanInterface {
     /// Open a SocketCAN interface by name (e.g., "can0").
     pub fn new(interface_name: &str) -> CanResult<Self> {
-        let socket = socketcan::tokio::CanSocket::open(interface_name).map_err(|e| {
-            CanError::Interface(format!("failed to open {interface_name}: {e}"))
-        })?;
+        let socket = socketcan::tokio::CanSocket::open(interface_name)
+            .map_err(|e| CanError::Interface(format!("failed to open {interface_name}: {e}")))?;
         tracing::info!(interface = interface_name, "SocketCAN interface opened");
         Ok(Self { socket })
     }
@@ -153,9 +152,10 @@ impl CanInterface for SocketCanInterface {
         }
 
         // ── Send via SocketCAN ───────────────────────────────────
-        let sc_frame = socketcan::CanFrame::from_raw_id(frame.id, &frame.data).ok_or_else(
-            || CanError::Interface(format!("invalid CAN frame: id=0x{:03X}", frame.id)),
-        )?;
+        let sc_frame =
+            socketcan::CanFrame::from_raw_id(frame.id, &frame.data).ok_or_else(|| {
+                CanError::Interface(format!("invalid CAN frame: id=0x{:03X}", frame.id))
+            })?;
 
         self.socket
             .write_frame(sc_frame)
@@ -185,16 +185,10 @@ impl CanInterface for SocketCanInterface {
 
     async fn drain_rx_buffer(&self) {
         let mut drained = 0u32;
-        loop {
-            match tokio::time::timeout(
-                Duration::from_millis(1),
-                self.socket.read_frame(),
-            )
-            .await
-            {
-                Ok(Ok(_)) => drained += 1,
-                _ => break,
-            }
+        while let Ok(Ok(_)) =
+            tokio::time::timeout(Duration::from_millis(1), self.socket.read_frame()).await
+        {
+            drained += 1;
         }
         if drained > 0 {
             tracing::debug!(frames = drained, "drained stale CAN frames");

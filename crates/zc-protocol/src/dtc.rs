@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// OBD-II Diagnostic Trouble Code.
+/// OBD-II / UDS Diagnostic Trouble Code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DtcCode {
     /// Standard DTC string (e.g., "P0300", "C0035").
@@ -9,9 +9,18 @@ pub struct DtcCode {
     pub category: DtcCategory,
     /// Severity classification.
     pub severity: DtcSeverity,
+    /// How severity was determined: "database" (exact match) or "heuristic" (pattern-based).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity_source: Option<String>,
     /// Human-readable description (from DTC database).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// UDS Failure Type Byte description (only for UDS DTCs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_type: Option<String>,
+    /// Raw UDS DTC bytes as hex (e.g., "030042") — preserves original encoding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_dtc: Option<String>,
     /// Whether MIL (check engine light) is illuminated.
     pub mil_status: bool,
     /// Freeze frame data captured when DTC was set.
@@ -104,7 +113,10 @@ mod tests {
             code: "P0300".into(),
             category: DtcCategory::Powertrain,
             severity: DtcSeverity::Critical,
+            severity_source: Some("database".into()),
             description: Some("Random/Multiple Cylinder Misfire Detected".into()),
+            failure_type: None,
+            raw_dtc: None,
             mil_status: true,
             freeze_frame: Some(FreezeFrame {
                 engine_rpm: Some(2500.0),
@@ -133,5 +145,72 @@ mod tests {
             serde_json::to_string(&DtcSeverity::Info).unwrap(),
             r#""info""#
         );
+    }
+
+    #[test]
+    fn dtc_with_failure_type_roundtrip() {
+        let dtc = DtcCode {
+            code: "P0300".into(),
+            category: DtcCategory::Powertrain,
+            severity: DtcSeverity::Critical,
+            severity_source: Some("database".into()),
+            description: Some("Random/Multiple Cylinder Misfire Detected".into()),
+            failure_type: Some("Circuit Short to Ground".into()),
+            raw_dtc: Some("030007".into()),
+            mil_status: false,
+            freeze_frame: None,
+        };
+        let json = serde_json::to_string(&dtc).unwrap();
+        assert!(json.contains("failure_type"));
+        assert!(json.contains("Circuit Short to Ground"));
+        assert!(json.contains("raw_dtc"));
+        assert!(json.contains("030007"));
+        assert!(json.contains("severity_source"));
+
+        let deserialized: DtcCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.failure_type.as_deref(),
+            Some("Circuit Short to Ground")
+        );
+        assert_eq!(deserialized.raw_dtc.as_deref(), Some("030007"));
+        assert_eq!(deserialized.severity_source.as_deref(), Some("database"));
+    }
+
+    #[test]
+    fn dtc_optional_fields_omitted_when_none() {
+        let dtc = DtcCode {
+            code: "P0171".into(),
+            category: DtcCategory::Powertrain,
+            severity: DtcSeverity::Warning,
+            severity_source: None,
+            description: None,
+            failure_type: None,
+            raw_dtc: None,
+            mil_status: false,
+            freeze_frame: None,
+        };
+        let json = serde_json::to_string(&dtc).unwrap();
+        // Optional fields should be omitted
+        assert!(!json.contains("failure_type"));
+        assert!(!json.contains("raw_dtc"));
+        assert!(!json.contains("severity_source"));
+        assert!(!json.contains("description"));
+        assert!(!json.contains("freeze_frame"));
+    }
+
+    #[test]
+    fn dtc_deserializes_without_new_fields() {
+        // Backward compatibility: old JSON without the new fields should still deserialize
+        let json = r#"{
+            "code": "P0300",
+            "category": "powertrain",
+            "severity": "critical",
+            "mil_status": true
+        }"#;
+        let dtc: DtcCode = serde_json::from_str(json).unwrap();
+        assert_eq!(dtc.code, "P0300");
+        assert!(dtc.failure_type.is_none());
+        assert!(dtc.raw_dtc.is_none());
+        assert!(dtc.severity_source.is_none());
     }
 }

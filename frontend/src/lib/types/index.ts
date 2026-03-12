@@ -1,6 +1,33 @@
 export * from './device';
 export * from './command';
 
+/** DTC severity levels matching zc-protocol DtcSeverity. */
+export type DtcSeverity = 'info' | 'warning' | 'critical' | 'unknown';
+
+/** DTC category matching zc-protocol DtcCategory. */
+export type DtcCategory = 'powertrain' | 'chassis' | 'body' | 'network';
+
+/** Diagnostic Trouble Code — mirrors zc-protocol DtcCode. */
+export interface DtcCode {
+	code: string;
+	category: DtcCategory;
+	severity: DtcSeverity;
+	severity_source?: string;
+	description?: string;
+	failure_type?: string;
+	raw_dtc?: string;
+	mil_status: boolean;
+	freeze_frame?: {
+		engine_rpm?: number;
+		vehicle_speed?: number;
+		coolant_temp?: number;
+		engine_load?: number;
+		fuel_system_status?: string;
+		short_term_fuel_trim?: number;
+		long_term_fuel_trim?: number;
+	};
+}
+
 export interface HealthResponse {
 	status: string;
 	version: string;

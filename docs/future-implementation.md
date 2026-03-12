@@ -77,15 +77,15 @@ Example: `0x04 0x20` → P0420 (Catalyst Efficiency Below Threshold)
 
 | Capability | $500 Scanner | Our Project | Gap |
 |---|---|---|---|
-| Read generic DTCs | Mode 0x03 + descriptions | `read_dtcs` (no descriptions) | **DTC database** |
-| Read UDS DTCs | UDS 0x19 + ODX/PDX | `read_uds_dtcs` (no descriptions) | **DTC database** |
+| Read generic DTCs | Mode 0x03 + descriptions | `read_dtcs` + 18K-code database | Done (Phase 17) |
+| Read UDS DTCs | UDS 0x19 + ODX/PDX | `read_uds_dtcs` + descriptions + FTB | Done (Phase 17) |
 | Clear DTCs | Mode 0x04 / UDS 0x14 | Not implemented | **New tool** |
 | Live sensor data | 200+ PIDs | `read_pid` (8 PIDs) | **Expand PID coverage** |
 | Freeze frame | Mode 0x02 | `read_freeze` (exists) | Minor gaps |
 | VIN decode | Mode 0x09 + NHTSA VPIC | `read_vin` (raw only) | **VIN decoder** |
-| DTC descriptions | Proprietary DB (10K+) | None | **DTC database** |
-| Failure type decode | ISO 15031-6 FTB | None | **FTB lookup (~40 entries)** |
-| Manufacturer DTCs | Licensed ODX/PDX | None | **Per-ECU DTC files** |
+| DTC descriptions | Proprietary DB (10K+) | 18,805 codes (Wal33D, MIT) | Done (Phase 17) |
+| Failure type decode | ISO 15031-6 FTB | `ftb.rs` (~40 entries) | Done (Phase 17) |
+| Manufacturer DTCs | Licensed ODX/PDX | 9,390 mfr-specific codes | Done (Phase 17) |
 | I/M readiness | Mode 0x01 PID 0x01 | Not implemented | Future |
 | Pending DTCs | Mode 0x07 | Not implemented | Future |
 | Permanent DTCs | Mode 0x0A | Not implemented | Future |
@@ -223,19 +223,20 @@ We already have NRC decoding in our `uds.rs`.
 
 ## Implementation Roadmap
 
-### Phase 17: DTC Description Database (Tier 1)
+### Phase 17: DTC Description Database (Tier 1) — DONE
 
-Embed the Wal33D database (18,805 codes, MIT) into `zc-canbus-tools` as a static lookup.
-Add FTB decoder for UDS 3-byte DTCs. Immediate impact on all 219 BCR codes.
+Embedded Wal33D/dtc-database (18,805 codes, MIT) into `zc-canbus-tools` as `include_str!` + `LazyLock<HashMap>`.
+Added FTB decoder for UDS 3-byte DTCs. New `DtcCode` fields: `failure_type`, `raw_dtc`, `severity_source`.
 
-- [ ] Download and parse Wal33D/dtc-database source `.txt` files
-- [ ] Create `dtc_descriptions.rs` — static lookup: code → description (generic)
-- [ ] Create `dtc_descriptions_mfr.rs` — (code, manufacturer) → description
-- [ ] Create `ftb.rs` — Failure Type Byte decoder (~40 entries)
-- [ ] Integrate into `read_dtcs` tool response (OBD-II DTCs)
-- [ ] Integrate into `read_uds_dtcs` tool response (UDS DTCs with FTB)
-- [ ] Update frontend to display DTC descriptions alongside codes
-- [ ] Tests for encoding/decoding, FTB lookup, description coverage
+- [x] Data prep script (`scripts/prepare_dtc_data.py`) — downloads SQLite DB, extracts TSV (pinned commit SHA)
+- [x] TSV data files: `crates/zc-canbus-tools/data/dtc_generic.tsv` (9,415) + `dtc_manufacturer.tsv` (9,390)
+- [x] Rewrote `dtc_db.rs` — generic + manufacturer lookup, conservative severity heuristic
+- [x] Created `ftb.rs` — ~40 FTB entries per ISO 14229-1 Annex D
+- [x] Added `failure_type`, `raw_dtc`, `severity_source` to `DtcCode` (backward-compatible)
+- [x] `read_dtcs` populates descriptions + severity from database
+- [x] `read_uds_dtcs` decodes FTB, looks up descriptions, preserves raw 3-byte hex, 5-char code
+- [x] Frontend TypeScript types: `DtcCode`, `DtcSeverity`, `DtcCategory`
+- [x] 564 tests passing, clippy clean, fmt clean, svelte-check clean
 
 ### Phase 18: Clear DTCs Tool
 

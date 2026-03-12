@@ -79,31 +79,34 @@ async fn main() -> anyhow::Result<()> {
     let ollama_ref = ollama_client.as_ref();
 
     // ── CAN interface ─────────────────────────────────────────
-    let can_interface: Box<dyn zc_canbus_tools::CanInterface> =
-        match config.can_interface.as_deref() {
-            #[cfg(target_os = "linux")]
-            Some(iface) => {
-                match zc_canbus_tools::SocketCanInterface::new(iface) {
-                    Ok(s) => {
-                        tracing::info!(interface = iface, "real SocketCAN interface opened");
-                        Box::new(s)
-                    }
-                    Err(e) => {
-                        tracing::warn!(interface = iface, error = %e, "SocketCAN open failed, falling back to mock");
-                        Box::new(zc_canbus_tools::MockCanInterface::new())
-                    }
-                }
+    let can_interface: Box<dyn zc_canbus_tools::CanInterface> = match config
+        .can_interface
+        .as_deref()
+    {
+        #[cfg(target_os = "linux")]
+        Some(iface) => match zc_canbus_tools::SocketCanInterface::new(iface) {
+            Ok(s) => {
+                tracing::info!(interface = iface, "real SocketCAN interface opened");
+                Box::new(s)
             }
-            #[cfg(not(target_os = "linux"))]
-            Some(iface) => {
-                tracing::warn!(interface = iface, "SocketCAN not available on this platform, using mock");
+            Err(e) => {
+                tracing::warn!(interface = iface, error = %e, "SocketCAN open failed, falling back to mock");
                 Box::new(zc_canbus_tools::MockCanInterface::new())
             }
-            None => {
-                tracing::info!("no CAN interface configured, using mock");
-                Box::new(zc_canbus_tools::MockCanInterface::new())
-            }
-        };
+        },
+        #[cfg(not(target_os = "linux"))]
+        Some(iface) => {
+            tracing::warn!(
+                interface = iface,
+                "SocketCAN not available on this platform, using mock"
+            );
+            Box::new(zc_canbus_tools::MockCanInterface::new())
+        }
+        None => {
+            tracing::info!("no CAN interface configured, using mock");
+            Box::new(zc_canbus_tools::MockCanInterface::new())
+        }
+    };
     let can_available = config.can_interface.is_some();
 
     // ── Log source ──────────────────────────────────────────────

@@ -66,11 +66,20 @@ impl CanTool for ReadDtcs {
                     .map(|e| (Some(e.description.to_string()), e.severity))
                     .unwrap_or((None, DtcSeverity::Unknown));
 
+                let severity_source = if description.is_some() {
+                    Some("database".into())
+                } else {
+                    None
+                };
+
                 dtcs.push(DtcCode {
                     code,
                     category,
                     severity,
+                    severity_source,
                     description,
+                    failure_type: None,
+                    raw_dtc: None,
                     mil_status: false,
                     freeze_frame: None,
                 });
