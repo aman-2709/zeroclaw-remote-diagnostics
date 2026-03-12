@@ -215,20 +215,51 @@ BCR requires vehicle speed wakeup (CAN 0x98) before responding to UDS. Generic E
 - [x] Tests: wakeup frame generation, wakeup execution before UDS, NRC 0x78 retry, profiles without wakeup unaffected
 - [ ] Deploy to S32G and verify BCR DTC reads succeed end-to-end via frontend
 
-## Phase 19: Clear DTCs Tool (was 18)
+## Phase 19: Agent Recovery Loop — AI Retry on Tool Failure
+When a tool fails or a shell command errors, the executor should attempt intelligent
+recovery instead of returning the raw error. Tiered: rule-based recovery first (free,
+<1ms), then Ollama (local LLM, if available), then Bedrock via MQTT (cloud LLM fallback).
+
+### Recovery triggers
+- **Tool execution errors** (source not found, timeout, unknown ECU, etc.) → always retry
+- **Shell errors** (command not found, empty stdout) → always retry
+- **Tool success with empty data** → do NOT retry (empty is a valid answer)
+
+### Architecture
+- Recovery loop lives in executor.rs (edge-side), wrapping execute_single()
+- Max 2 attempts total (1 original + 1 retry), shared timeout budget (15s)
+- Recovery context includes: original query, tool attempted, args, error, available tools
+- Frontend shows attempt chain ("Attempt 1: failed → Attempt 2: success")
+- Full attempt history in CommandResponse metadata for audit trail
+
+### Tasks
+- [ ] Define `RecoveryContext` struct (original query, failed tool, error, available tools, device capabilities)
+- [ ] Add rule-based recovery rules in executor (e.g., syslog not found → query_journal, OBD timeout → try UDS equivalent)
+- [ ] Add `recover()` method to executor: rules → Ollama → Bedrock (tiered, like inference)
+- [ ] Add Ollama recovery prompt (tool failed with error X, original query Y, suggest alternative)
+- [ ] Add Bedrock recovery via MQTT request/response (new topic: `fleet/{id}/{id}/recovery/request|response`)
+- [ ] Wrap execute() in agent loop: attempt → check result → recover → retry (max 2 attempts)
+- [ ] Add `attempts` field to CommandResponse (Vec of attempt summaries with tool, args, result, duration)
+- [ ] Frontend: render attempt chain in CommandForm (show retry history, not just final result)
+- [ ] Add device capability profile to heartbeat/shadow (has_journald, has_syslog, can_interfaces, etc.)
+- [ ] Send device capabilities to cloud so first-attempt inference is more accurate
+- [ ] Tests: recovery on tool error, recovery on shell error, no recovery on success, no recovery on empty-but-valid, max retry limit, timeout budget respected
+- [ ] Cost/observability: log recovery tier used, track retry rate per tool for rule engine improvement
+
+## Phase 20: Clear DTCs Tool
 - [ ] Safety review: require confirmation parameter (`"confirm": true`)
 - [ ] OBD-II Mode 0x04 — `clear_dtcs` tool
 - [ ] UDS Service 0x14 — `clear_uds_dtcs` tool (selective clearing by group)
 - [ ] Add 0x04/0x14 to safety allowlist (with confirmation gate)
 - [ ] Rule engine + Bedrock patterns for clear commands
 
-## Phase 20: Expanded PID Coverage (8 → 200+)
+## Phase 21: Expanded PID Coverage (8 → 200+)
 - [ ] Create `pid_database.rs` — static PID catalog with formulas and units
 - [ ] PID formula engine (runtime evaluation of `(256*A + B) / 4` expressions)
 - [ ] Update `read_pid` to accept any supported PID
 - [ ] Unit conversion (metric/imperial)
 
-## Phase 21: VIN Decoder (NHTSA VPIC, public domain)
+## Phase 22: VIN Decoder (NHTSA VPIC, public domain)
 - [ ] Offline VPIC SQLite database
 - [ ] WMI lookup, SAE J287 checksum, pattern matching
 - [ ] Update `read_vin` tool with decoded make/model/year/engine
