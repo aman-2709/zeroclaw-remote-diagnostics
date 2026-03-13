@@ -65,7 +65,7 @@ sleep 3
 # 4. Fleet agent
 echo "[4/4] Starting fleet agent..."
 RUST_LOG=info \
-cargo run -p zc-fleet-agent -- "$ROOT/dev/agent.toml" &
+cargo run -p zc-fleet-agent --features bedrock -- "$ROOT/dev/agent.toml" &
 PIDS+=($!)
 sleep 2
 

@@ -16,10 +16,8 @@ model = "phi3:mini"
 timeout_secs = 30
 enabled = true
 
-# AWS Bedrock cloud LLM fallback (requires --features bedrock)
-# Uses AWS credentials from environment (AWS_PROFILE, IAM role, etc.)
-# [bedrock]
-# enabled = true
-# region = "us-east-1"
-# model_id = "us.amazon.nova-lite-v1:0"
-# timeout_secs = 15
+[bedrock]
+enabled = true
+region = "us-east-2"
+model_id = "us.amazon.nova-lite-v1:0"
+timeout_secs = 15
