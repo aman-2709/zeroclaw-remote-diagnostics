@@ -48,6 +48,118 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 | Bedrock | `--features bedrock` + `[bedrock] enabled = true` | Cloud LLM fallback (Nova Lite) | 200–1500 ms | ~$0.001/query |
 | Fallback | always active | Keyword matching (greetings, help, thanks) | <1 ms | $0 |
 
+### Inference Configuration Reference
+
+Three independent configuration points control where inference happens:
+
+| What | Where | How to configure |
+|------|-------|-----------------|
+| **Cloud inference** | Cloud API server | `INFERENCE_ENGINE` env var: `local` (default), `bedrock`, `tiered` |
+| **Edge Ollama** | Fleet agent (agent.toml) | `[ollama] enabled = true\|false` |
+| **Edge Bedrock** | Fleet agent (agent.toml + compile flag) | `cargo build --features bedrock` + `[bedrock] enabled = true\|false` |
+
+Cloud engines run first. Edge engines are a safety net for commands that arrive without a pre-parsed intent.
+
+#### Common Configurations
+
+**1. Smart edge, dumb cloud (recommended for autonomous agents)**
+
+Cloud does rules only. Edge agent handles everything else via Bedrock.
+
+```bash
+# Cloud API
+INFERENCE_ENGINE=local cargo run -p zc-cloud-api
+```
+```toml
+# agent.toml
+[ollama]
+enabled = false
+
+[bedrock]
+enabled = true
+region = "us-east-2"
+model_id = "us.amazon.nova-lite-v1:0"
+timeout_secs = 15
+```
+```bash
+cargo run -p zc-fleet-agent --features bedrock -- agent.toml
+```
+Engine chain: `rules (cloud) → bedrock (edge) → fallback (edge)`
+
+**2. Cloud handles everything (cheapest, simplest)**
+
+Cloud Bedrock parses all commands. Edge just executes pre-parsed intents.
+
+```bash
+# Cloud API
+INFERENCE_ENGINE=tiered cargo run -p zc-cloud-api
+```
+```toml
+# agent.toml
+[ollama]
+enabled = false
+# No [bedrock] section needed
+```
+```bash
+cargo run -p zc-fleet-agent -- agent.toml   # no --features bedrock needed
+```
+Engine chain: `rules (cloud) → bedrock (cloud) → fallback (edge)`
+
+**3. Fully offline (no cloud LLM cost)**
+
+Ollama runs on-device. No Bedrock anywhere.
+
+```bash
+# Cloud API
+INFERENCE_ENGINE=local cargo run -p zc-cloud-api
+```
+```toml
+# agent.toml
+[ollama]
+enabled = true
+host = "http://localhost:11434"
+model = "phi3:mini"
+timeout_secs = 10
+```
+```bash
+cargo run -p zc-fleet-agent -- agent.toml
+```
+Engine chain: `rules (cloud) → ollama (edge) → fallback (edge)`
+
+**4. Maximum resilience (Ollama + Bedrock fallback)**
+
+Ollama handles most queries for free. Bedrock catches what Ollama misses.
+
+```toml
+# agent.toml
+[ollama]
+enabled = true
+timeout_secs = 10
+
+[bedrock]
+enabled = true
+region = "us-east-2"
+```
+```bash
+cargo run -p zc-fleet-agent --features bedrock -- agent.toml
+```
+Engine chain: `rules (cloud) → ollama (edge) → bedrock (edge) → fallback (edge)`
+
+**5. No-GPU device (e.g., S32G)**
+
+Device can't run Ollama. Edge Bedrock handles unparsed commands directly.
+
+```toml
+# agent.toml
+[ollama]
+enabled = false
+
+[bedrock]
+enabled = true
+region = "us-east-2"
+```
+Engine chain: `rules (cloud) → bedrock (edge) → fallback (edge)`
+
 ## Project Structure
 
 ```
