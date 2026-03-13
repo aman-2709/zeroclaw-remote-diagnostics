@@ -50,14 +50,41 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "iw",      // WiFi interface info and signal strength
     "ethtool", // Ethernet link speed and interface details
     "gpspipe", // GPS location via gpsd daemon
+    // Diagnostic utilities (read-only)
+    "which",       // find binary paths
+    "file",        // file type identification
+    "stat",        // file metadata (size, permissions, timestamps)
+    "ldd",         // shared library dependencies
+    "env",         // environment variables
+    "printenv",    // environment variables
+    "id",          // current user/group info
+    "nproc",       // CPU count
+    "lsmod",       // loaded kernel modules
+    "lsusb",       // USB devices
+    "lspci",       // PCI devices
+    "lsof",        // open files/ports
+    "timedatectl", // time/timezone info
+    "hostnamectl", // system identity
+    "dmidecode",   // hardware/BIOS info
+    // Package managers (read-only subcommands; restricted below)
+    "dpkg", // Debian package info
+    "rpm",  // RPM package info
+    "apt",  // APT package queries
+];
+
+/// Binaries that are blocked for general execution but allowed with `--version` / `-V` / `-version`.
+/// Enables "what version of X is installed?" diagnostics without arbitrary code execution.
+const VERSION_ONLY_COMMANDS: &[&str] = &[
+    "python", "python3", "curl", "openssl", "node", "bash", "sh", "perl", "ruby", "ssh", "gcc",
+    "g++", "java", "javac", "go", "rustc", "cargo", "docker", "git", "make", "cmake", "nginx",
+    "php", "dotnet", "kubectl", "terraform", "ansible", "pip", "pip3", "npm", "yarn", "pnpm",
 ];
 
 /// Commands explicitly blocked (dangerous even if somehow reached).
 const BLOCKED_COMMANDS: &[&str] = &[
-    "rm", "dd", "sudo", "su", "kill", "killall", "pkill", "chmod", "chown", "chgrp", "curl",
-    "wget", "python", "python3", "bash", "sh", "zsh", "perl", "ruby", "node", "nc", "ncat",
-    "socat", "telnet", "ssh", "scp", "rsync", "mount", "umount", "mkfs", "fdisk", "parted",
-    "iptables", "nft", "reboot", "shutdown", "poweroff", "halt", "init",
+    "rm", "dd", "sudo", "su", "kill", "killall", "pkill", "chmod", "chown", "chgrp", "wget",
+    "zsh", "nc", "ncat", "socat", "telnet", "scp", "rsync", "mount", "umount", "mkfs", "fdisk",
+    "parted", "iptables", "nft", "reboot", "shutdown", "poweroff", "halt", "init",
 ];
 
 /// Shell metacharacters that indicate injection attempts.
@@ -140,8 +167,21 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
         return Err(ShellError::Blocked(program.clone()));
     }
 
-    // Check allowed list
-    if !ALLOWED_COMMANDS.contains(&program.as_str()) {
+    // Version-only commands: allow only --version / -V / -version / version
+    if VERSION_ONLY_COMMANDS.contains(&program.as_str()) {
+        let is_version_query = args.len() == 1
+            && matches!(
+                args[0].as_str(),
+                "--version" | "-V" | "-version" | "version" | "--help"
+            );
+        if !is_version_query {
+            return Err(ShellError::NotAllowed(format!(
+                "{program} (only --version allowed)"
+            )));
+        }
+        // Version queries are safe — skip the allowlist check and fall through to execution
+    } else if !ALLOWED_COMMANDS.contains(&program.as_str()) {
+        // Check allowed list for non-version-only commands
         return Err(ShellError::NotAllowed(program.clone()));
     }
 
@@ -158,6 +198,51 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
             None => {
                 // bare "systemctl" is fine (lists units)
             }
+        }
+    }
+
+    // Restrict dpkg to read-only operations
+    if program == "dpkg" {
+        const ALLOWED_DPKG: &[&str] = &["-l", "--list", "-L", "--listfiles", "-s", "--status",
+            "-S", "--search", "-p", "--print-avail", "--get-selections"];
+        match args.first() {
+            Some(flag) if ALLOWED_DPKG.contains(&flag.as_str()) => {}
+            Some(flag) => {
+                return Err(ShellError::NotAllowed(format!(
+                    "dpkg {flag} (only query flags allowed: -l/-L/-s/-S/-p/--get-selections)"
+                )));
+            }
+            None => {} // bare "dpkg" prints usage, harmless
+        }
+    }
+
+    // Restrict apt to read-only operations
+    if program == "apt" {
+        const ALLOWED_APT: &[&str] = &["list", "show", "search", "depends", "rdepends", "policy",
+            "madison"];
+        match args.first() {
+            Some(sub) if ALLOWED_APT.contains(&sub.as_str()) => {}
+            Some(sub) => {
+                return Err(ShellError::NotAllowed(format!(
+                    "apt {sub} (only list/show/search/depends/policy allowed)"
+                )));
+            }
+            None => {} // bare "apt" prints usage
+        }
+    }
+
+    // Restrict rpm to read-only operations
+    if program == "rpm" {
+        const ALLOWED_RPM: &[&str] = &["-q", "-qa", "-qi", "-ql", "-qf", "--query",
+            "--querytags"];
+        match args.first() {
+            Some(flag) if ALLOWED_RPM.contains(&flag.as_str()) => {}
+            Some(flag) => {
+                return Err(ShellError::NotAllowed(format!(
+                    "rpm {flag} (only query flags allowed: -q/-qa/-qi/-ql/-qf)"
+                )));
+            }
+            None => {} // bare "rpm" prints usage
         }
     }
 
@@ -282,9 +367,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bash_blocked() {
+    async fn bash_arbitrary_blocked() {
         let result = execute("bash -c 'echo pwned'").await;
-        assert!(matches!(result, Err(ShellError::Blocked(_))));
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn bash_version_allowed() {
+        let result = execute("bash --version").await;
+        assert!(result.is_ok(), "bash --version should be allowed: {result:?}");
+        assert!(!result.unwrap().stdout.is_empty());
     }
 
     #[tokio::test]
@@ -484,6 +576,195 @@ mod tests {
     #[tokio::test]
     async fn ethtool_reset_blocked() {
         let result = execute("ethtool --reset eth0").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    // ── version-only command tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn python3_version_allowed() {
+        let result = execute("python3 --version").await;
+        // Ok if installed, Exec error if not — must not be NotAllowed/Blocked
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn python3_arbitrary_blocked() {
+        let result = execute("python3 -c 'import os'").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn curl_version_allowed() {
+        let result = execute("curl --version").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn curl_arbitrary_blocked() {
+        let result = execute("curl http://example.com").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn openssl_version_allowed() {
+        let result = execute("openssl version").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ssh_version_allowed() {
+        let result = execute("ssh -V").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn git_version_allowed() {
+        let result = execute("git --version").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn node_arbitrary_blocked() {
+        let result = execute("node -e 'process.exit(1)'").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn docker_version_allowed() {
+        let result = execute("docker --version").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn version_only_no_args_blocked() {
+        let result = execute("python3").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn version_only_help_allowed() {
+        let result = execute("curl --help").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    // ── diagnostic utility tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn which_allowed() {
+        let result = execute("which ls").await;
+        assert!(result.is_ok(), "which should be allowed: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn id_allowed() {
+        let result = execute("id").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn nproc_allowed() {
+        let result = execute("nproc").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn stat_allowed() {
+        let result = execute("stat /tmp").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn lsmod_allowed() {
+        let result = execute("lsmod").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn env_allowed() {
+        let result = execute("env").await;
+        assert!(result.is_ok());
+    }
+
+    // ── package manager restriction tests ───────────────────────
+
+    #[tokio::test]
+    async fn dpkg_list_allowed() {
+        let result = execute("dpkg -l").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dpkg_install_blocked() {
+        let result = execute("dpkg -i package.deb").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn apt_list_allowed() {
+        let result = execute("apt list --installed").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apt_install_blocked() {
+        let result = execute("apt install curl").await;
+        assert!(matches!(result, Err(ShellError::NotAllowed(_))));
+    }
+
+    #[tokio::test]
+    async fn rpm_query_allowed() {
+        let result = execute("rpm -qa").await;
+        match result {
+            Ok(_) => {}
+            Err(ShellError::Exec(_)) => {}
+            other => panic!("expected Ok or Exec error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rpm_install_blocked() {
+        let result = execute("rpm -i package.rpm").await;
         assert!(matches!(result, Err(ShellError::NotAllowed(_))));
     }
 }

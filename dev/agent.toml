@@ -13,8 +13,8 @@ use_tls = false
 [ollama]
 host = "http://localhost:11434"
 model = "phi3:mini"
-timeout_secs = 30
-enabled = true
+timeout_secs = 10
+enabled = false
 
 [bedrock]
 enabled = true
