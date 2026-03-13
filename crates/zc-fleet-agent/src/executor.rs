@@ -64,11 +64,12 @@ impl<'a> CommandExecutor<'a> {
 
         // Fast path: intent already parsed by cloud
         let (intent, tier, engine_name) = if let Some(ref intent) = envelope.parsed_intent {
-            (
-                intent.clone(),
-                InferenceTier::Local,
-                envelope.engine.clone(),
-            )
+            let tier = envelope
+                .engine
+                .as_deref()
+                .map(InferenceTier::from_engine_name)
+                .unwrap_or(InferenceTier::Local);
+            (intent.clone(), tier, envelope.engine.clone())
         } else {
             // Try each engine in the chain; first Some wins
             let mut result = None;
@@ -83,7 +84,7 @@ impl<'a> CommandExecutor<'a> {
                     );
                     result = Some((
                         parsed,
-                        InferenceTier::Local,
+                        InferenceTier::from_engine_name(engine.engine_name()),
                         Some(engine.engine_name().to_string()),
                     ));
                     break;

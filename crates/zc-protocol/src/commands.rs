@@ -153,14 +153,27 @@ pub enum CommandStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InferenceTier {
-    /// Local Ollama (Phi-3 Mini / TinyLlama / Gemma 2B).
+    /// Local rule-based engine, Ollama, or FallbackReply (no cloud cost).
     Local,
-    /// AWS Bedrock Nova Lite.
+    /// AWS Bedrock Nova Lite (cloud or edge).
     CloudLite,
     /// AWS Bedrock Claude Haiku.
     CloudHaiku,
     /// AWS Bedrock Claude Sonnet (escalation only).
     CloudSonnet,
+}
+
+impl InferenceTier {
+    /// Derive the inference tier from an engine name string.
+    ///
+    /// Engine names: `"local"` / `"rule-based"` / `"ollama"` / `"fallback"` → Local,
+    /// `"bedrock"` → CloudLite.
+    pub fn from_engine_name(name: &str) -> Self {
+        match name {
+            "bedrock" => Self::CloudLite,
+            _ => Self::Local,
+        }
+    }
 }
 
 impl CommandEnvelope {
