@@ -76,12 +76,31 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("ollama local inference disabled");
         None
     };
+    // Bedrock engine (feature-gated, optional)
+    #[cfg(feature = "bedrock")]
+    let bedrock_engine = if config.bedrock.enabled {
+        tracing::info!(
+            region = %config.bedrock.region,
+            model_id = %config.bedrock.model_id,
+            timeout_secs = config.bedrock.timeout_secs,
+            "bedrock edge inference enabled"
+        );
+        Some(zc_fleet_agent::bedrock::EdgeBedrockEngine::new(config.bedrock.clone()).await)
+    } else {
+        tracing::info!("bedrock edge inference disabled");
+        None
+    };
+
     let fallback = FallbackReplyEngine;
 
-    // Build engine chain: Ollama first (if enabled), fallback always last
+    // Build engine chain: Ollama first (free/fast), Bedrock second (paid cloud), fallback last
     let mut engines: Vec<&dyn EdgeInferenceEngine> = Vec::new();
     if let Some(ref ollama) = ollama_client {
         engines.push(ollama);
+    }
+    #[cfg(feature = "bedrock")]
+    if let Some(ref bedrock) = bedrock_engine {
+        engines.push(bedrock);
     }
     engines.push(&fallback);
     tracing::info!(

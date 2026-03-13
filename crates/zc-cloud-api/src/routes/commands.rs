@@ -64,6 +64,7 @@ pub async fn send_command(
         None => (None, None),
     };
     envelope.parsed_intent = parsed_intent.clone();
+    envelope.engine = inference_tier.clone();
 
     // Store the command (with parsed intent if available)
     if let Some(pool) = &state.pool {

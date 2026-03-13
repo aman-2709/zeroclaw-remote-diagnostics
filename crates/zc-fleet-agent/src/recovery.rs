@@ -239,6 +239,43 @@ pub async fn ollama_recovery(
     Some(result)
 }
 
+/// Ask the Bedrock edge engine for a recovery suggestion. Mirrors `ollama_recovery()`
+/// but uses the Bedrock Converse API. Returns `None` on timeout, parse failure,
+/// or if the suggestion is the same tool that already failed.
+#[cfg(feature = "bedrock")]
+pub async fn bedrock_recovery(
+    ctx: &RecoveryContext,
+    engine: &crate::bedrock::EdgeBedrockEngine,
+    timeout: Duration,
+) -> Option<ParsedIntent> {
+    let (system_prompt, user_msg) = build_recovery_prompt(ctx);
+
+    let result = tokio::time::timeout(
+        timeout,
+        engine.call_converse_with_prompt(&system_prompt, &user_msg),
+    )
+    .await
+    .ok()
+    .flatten()?;
+
+    // Reject if the suggestion is the same tool that failed
+    if result.action == ctx.failed_action && result.tool_name == ctx.failed_tool {
+        tracing::info!(
+            tool = %ctx.failed_tool,
+            "bedrock recovery suggested same tool — rejecting"
+        );
+        return None;
+    }
+
+    // Reject reply suggestions (means Bedrock couldn't find an alternative)
+    if result.action == ActionKind::Reply {
+        tracing::info!("bedrock recovery returned reply — no alternative found");
+        return None;
+    }
+
+    Some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

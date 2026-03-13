@@ -151,6 +151,7 @@ async fn e2e_response_for_unknown_command() {
         responded_at: Utc::now(),
         error: None,
         attempts: None,
+        engine: None,
     };
 
     // REST path: should return 404
@@ -183,6 +184,7 @@ async fn e2e_response_id_mismatch() {
         responded_at: Utc::now(),
         error: None,
         attempts: None,
+        engine: None,
     };
 
     // POST to the correct command path, but body has wrong ID

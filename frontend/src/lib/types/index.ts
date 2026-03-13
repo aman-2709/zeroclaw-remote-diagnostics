@@ -97,6 +97,7 @@ export type WsEvent =
 			latency_ms: number | null;
 			responded_at: string;
 			attempts?: AttemptSummary[] | null;
+			engine?: string | null;
 	  }
 	| {
 			type: 'device_heartbeat';

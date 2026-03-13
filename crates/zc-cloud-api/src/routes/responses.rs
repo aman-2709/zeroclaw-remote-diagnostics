@@ -79,6 +79,7 @@ pub async fn ingest_response(
         latency_ms: Some(resp.latency_ms as i64),
         responded_at: Utc::now(),
         attempts: resp.attempts.clone(),
+        engine: resp.engine.clone(),
     });
 
     Ok(Json(serde_json::json!({ "status": "ok" })))
@@ -110,6 +111,7 @@ mod tests {
             initiated_by: "admin".into(),
             created_at: Utc::now(),
             timeout_secs: 30,
+            engine: None,
         };
 
         // We need to block to insert — use a sync approach via the Arc.
@@ -143,6 +145,7 @@ mod tests {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         };
 
         let response = app
@@ -188,6 +191,7 @@ mod tests {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         };
 
         let response = app
@@ -221,6 +225,7 @@ mod tests {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         };
 
         app.oneshot(
@@ -256,6 +261,7 @@ mod tests {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         };
 
         let response = app

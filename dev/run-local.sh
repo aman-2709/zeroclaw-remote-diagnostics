@@ -57,7 +57,7 @@ MQTT_FLEET_ID=fleet-alpha \
 MQTT_BROKER_HOST=localhost \
 MQTT_BROKER_PORT=1883 \
 MQTT_USE_TLS=false \
-RUST_LOG=info \
+RUST_LOG=info,aws_config=warn \
 cargo run -p zc-cloud-api &
 PIDS+=($!)
 sleep 3

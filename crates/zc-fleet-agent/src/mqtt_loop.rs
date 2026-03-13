@@ -339,6 +339,7 @@ mod tests {
             responded_at: chrono::Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         }
     }
 

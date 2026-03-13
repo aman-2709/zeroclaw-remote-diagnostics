@@ -25,6 +25,10 @@ pub struct CommandEnvelope {
     /// Command timeout in seconds (default 30).
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u32,
+    /// Name of the inference engine that parsed the command (e.g. "local", "bedrock").
+    /// Set by the cloud when it pre-parses; None if unparsed or edge-parsed.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub engine: Option<String>,
 }
 
 fn default_timeout_secs() -> u32 {
@@ -70,6 +74,8 @@ pub enum RecoverySource {
     RuleBased,
     /// Local Ollama LLM suggestion.
     Ollama,
+    /// AWS Bedrock cloud LLM suggestion.
+    Bedrock,
 }
 
 /// Summary of a single execution attempt within the recovery loop.
@@ -124,6 +130,10 @@ pub struct CommandResponse {
     /// Recovery attempt chain (present only when >1 attempt was made).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub attempts: Option<Vec<AttemptSummary>>,
+    /// Name of the inference engine that parsed the command (e.g. "ollama", "bedrock", "fallback").
+    /// None when the intent was pre-parsed by the cloud.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub engine: Option<String>,
 }
 
 /// Lifecycle status of a command.
@@ -171,6 +181,7 @@ impl CommandEnvelope {
             initiated_by: initiated_by.into(),
             created_at: Utc::now(),
             timeout_secs: default_timeout_secs(),
+            engine: None,
         }
     }
 }
@@ -265,11 +276,13 @@ mod tests {
             responded_at: Utc::now(),
             error: Some("CAN bus interface not available".into()),
             attempts: None,
+            engine: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("CAN bus interface not available"));
         assert!(!json.contains("response_text")); // skip_serializing_if = None
         assert!(!json.contains("attempts")); // skip_serializing_if = None
+        assert!(!json.contains("engine")); // skip_serializing_if = None
     }
 
     #[test]
@@ -347,15 +360,18 @@ mod tests {
                     recovery_source: Some(RecoverySource::RuleBased),
                 },
             ]),
+            engine: Some("ollama".into()),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("attempts"));
         assert!(json.contains("rule_based"));
+        assert!(json.contains(r#""engine":"ollama""#));
         let deserialized: CommandResponse = serde_json::from_str(&json).unwrap();
         let attempts = deserialized.attempts.unwrap();
         assert_eq!(attempts.len(), 2);
         assert_eq!(attempts[0].tool_name, "search_logs");
         assert_eq!(attempts[1].tool_name, "query_journal");
+        assert_eq!(deserialized.engine.as_deref(), Some("ollama"));
     }
 
     #[test]
@@ -384,5 +400,16 @@ mod tests {
             serde_json::to_string(&RecoverySource::Ollama).unwrap(),
             r#""ollama""#
         );
+        assert_eq!(
+            serde_json::to_string(&RecoverySource::Bedrock).unwrap(),
+            r#""bedrock""#
+        );
+    }
+
+    #[test]
+    fn recovery_source_bedrock_roundtrip() {
+        let json = r#""bedrock""#;
+        let source: RecoverySource = serde_json::from_str(json).unwrap();
+        assert_eq!(source, RecoverySource::Bedrock);
     }
 }

@@ -5,6 +5,47 @@ use zc_mqtt_channel::MqttConfig;
 
 use crate::inference::OllamaConfig;
 
+/// Configuration for the AWS Bedrock edge inference engine.
+///
+/// Defined here (not behind `#[cfg(feature = "bedrock")]`) so the TOML
+/// always deserializes cleanly. The engine itself is feature-gated.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BedrockConfig {
+    /// Whether Bedrock inference is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// AWS region for Bedrock API calls.
+    #[serde(default = "default_bedrock_region")]
+    pub region: String,
+    /// Bedrock model ID (e.g., "us.amazon.nova-lite-v1:0").
+    #[serde(default = "default_bedrock_model_id")]
+    pub model_id: String,
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_bedrock_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_bedrock_region() -> String {
+    "us-east-1".into()
+}
+fn default_bedrock_model_id() -> String {
+    "us.amazon.nova-lite-v1:0".into()
+}
+fn default_bedrock_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for BedrockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            region: default_bedrock_region(),
+            model_id: default_bedrock_model_id(),
+            timeout_secs: default_bedrock_timeout_secs(),
+        }
+    }
+}
+
 /// Top-level configuration for the fleet agent.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
@@ -30,6 +71,9 @@ pub struct AgentConfig {
     /// Local Ollama inference settings. Optional — defaults to enabled.
     #[serde(default)]
     pub ollama: OllamaConfig,
+    /// AWS Bedrock cloud inference settings. Optional — defaults to disabled.
+    #[serde(default)]
+    pub bedrock: BedrockConfig,
 }
 
 fn default_heartbeat_interval() -> u64 {
@@ -154,6 +198,55 @@ ca_cert_path = "/certs/ca.pem"
         assert_eq!(config.ollama.model, "phi3:mini");
         assert_eq!(config.ollama.timeout_secs, 5);
         assert!(config.ollama.enabled);
+    }
+
+    #[test]
+    fn deserialize_missing_bedrock_uses_defaults() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert!(!config.bedrock.enabled);
+        assert_eq!(config.bedrock.region, "us-east-1");
+        assert_eq!(config.bedrock.model_id, "us.amazon.nova-lite-v1:0");
+        assert_eq!(config.bedrock.timeout_secs, 15);
+    }
+
+    #[test]
+    fn deserialize_custom_bedrock_config() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+
+[bedrock]
+enabled = true
+region = "eu-west-1"
+model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+timeout_secs = 10
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert!(config.bedrock.enabled);
+        assert_eq!(config.bedrock.region, "eu-west-1");
+        assert_eq!(
+            config.bedrock.model_id,
+            "anthropic.claude-3-haiku-20240307-v1:0"
+        );
+        assert_eq!(config.bedrock.timeout_secs, 10);
     }
 
     #[test]

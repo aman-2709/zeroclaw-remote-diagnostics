@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "zc-fleet-agent"
 path = "src/main.rs"
 
+[features]
+default = []
+bedrock = ["dep:aws-config", "dep:aws-sdk-bedrockruntime"]
+
 [dependencies]
 zc-protocol = { workspace = true }
 zc-canbus-tools = { workspace = true }
@@ -29,6 +33,8 @@ tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+aws-config = { workspace = true, optional = true }
+aws-sdk-bedrockruntime = { workspace = true, optional = true }
 toml = "0.8"
 shell-words = "1.1"
 

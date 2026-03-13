@@ -142,6 +142,7 @@ async fn handle_command_response(payload: &[u8], state: &AppState) {
         latency_ms: Some(resp.latency_ms as i64),
         responded_at: Utc::now(),
         attempts: resp.attempts,
+        engine: resp.engine,
     });
 }
 
@@ -509,6 +510,7 @@ mod tests {
             initiated_by: "admin".into(),
             created_at: Utc::now(),
             timeout_secs: 30,
+            engine: None,
         };
         {
             let mut cmds = state.commands.try_write().unwrap();
@@ -531,6 +533,7 @@ mod tests {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         };
 
         let payload = serde_json::to_vec(&resp).unwrap();

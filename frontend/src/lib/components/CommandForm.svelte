@@ -24,6 +24,7 @@
 	let responseError = $state<string | null>(null);
 	let elapsedSecs = $state(0);
 	let responseAttempts = $state<AttemptSummary[] | null>(null);
+	let responseEngine = $state<string | null>(null);
 
 	let unsub: (() => void) | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -45,12 +46,13 @@
 		if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 	}
 
-	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null, attempts: AttemptSummary[] | null = null) {
+	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null, attempts: AttemptSummary[] | null = null, engine: string | null = null) {
 		cleanup();
 		awaitingResponse = false;
 		responseText = text;
 		responseData = data;
 		responseAttempts = attempts ?? null;
+		responseEngine = engine ?? null;
 		if (status === 'failed') {
 			responseError = errMsg || 'Command execution failed on device';
 		}
@@ -74,7 +76,7 @@
 		// Strategy 1: WebSocket push (instant)
 		unsub = wsStore.onEvent((event: WsEvent) => {
 			if (event.type === 'command_response' && event.command_id === commandId) {
-				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null, event.attempts ?? null);
+				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null, event.attempts ?? null, event.engine ?? null);
 			}
 		});
 
@@ -102,9 +104,10 @@
 				const data = (resp?.response_data ?? obj.response_data) as unknown | null;
 				const errMsg = (resp?.error ?? obj.error) as string | null;
 				const attempts = (resp?.attempts ?? obj.attempts) as AttemptSummary[] | null;
+				const engine = (resp?.engine ?? obj.engine) as string | null;
 
 				if (status && status !== 'pending' && status !== 'sent' && status !== 'received' && status !== 'executing') {
-					handleResponse(text ?? null, data ?? null, status, errMsg ?? null, attempts ?? null);
+					handleResponse(text ?? null, data ?? null, status, errMsg ?? null, attempts ?? null, engine ?? null);
 				}
 			} catch {
 				// Poll failed — will retry next interval
@@ -124,6 +127,7 @@
 		responseData = null;
 		responseError = null;
 		responseAttempts = null;
+		responseEngine = null;
 
 		try {
 			const envelope = await api.sendCommand({
@@ -237,6 +241,8 @@
 				return 'rule';
 			case 'ollama':
 				return 'ollama';
+			case 'bedrock':
+				return 'bedrock';
 			default:
 				return '';
 		}
@@ -314,6 +320,9 @@
 			{#if responseText}
 				<div class="mt-2 rounded border border-success/20 bg-success/5 p-2 text-xs">
 					<span class="font-medium text-success">Response:</span>
+					{#if responseEngine}
+						<span class="ml-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{responseEngine}</span>
+					{/if}
 					<pre class="mt-1 whitespace-pre-wrap break-words font-mono text-text">{responseText}</pre>
 				</div>
 			{/if}

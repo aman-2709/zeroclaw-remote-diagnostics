@@ -24,7 +24,7 @@ export interface CommandEnvelope {
 	timeout_secs: number;
 }
 
-export type RecoverySource = 'rule_based' | 'ollama';
+export type RecoverySource = 'rule_based' | 'ollama' | 'bedrock';
 
 export interface AttemptSummary {
 	attempt: number;
@@ -47,6 +47,7 @@ export interface CommandResponse {
 	latency_ms: number;
 	timestamp: string;
 	attempts?: AttemptSummary[] | null;
+	engine?: string | null;
 }
 
 export interface CommandRecord {

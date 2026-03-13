@@ -262,11 +262,20 @@ engine into the vec. FallbackReplyEngine handles greetings/help without any LLM.
 - [x] 618 tests passing (up from 604), clippy clean, fmt clean
 
 ## Phase 19c: Bedrock Edge Inference Engine
-- [ ] Implement `EdgeInferenceEngine` for Bedrock (AWS Converse API, reuse cloud bedrock.rs patterns)
-- [ ] Add `BedrockConfig` to AgentConfig TOML (region, model_id, timeout)
-- [ ] Push Bedrock engine into chain: `[OllamaClient, BedrockEngine, FallbackReplyEngine]`
-- [ ] Bedrock `suggest_recovery()` for cloud-assisted recovery on tool failure
-- [ ] Cost/observability: log engine used per command, track fallback rates
+Feature-gated (`--features bedrock`) cloud LLM fallback on the edge.
+Chain: `[Ollama, Bedrock, Fallback]` — free/fast first, paid cloud second, keyword catch-all last.
+
+- [x] Add `Bedrock` variant to `RecoverySource` enum in zc-protocol (backward-compatible serde)
+- [x] Update frontend `RecoverySource` union type with `'bedrock'`
+- [x] Feature-gate AWS SDK deps in zc-fleet-agent Cargo.toml (`bedrock = ["dep:aws-config", "dep:aws-sdk-bedrockruntime"]`)
+- [x] Add `BedrockConfig` to `AgentConfig` (region, model_id, timeout_secs, enabled) — always deserializable, engine feature-gated
+- [x] Create `bedrock.rs` — `EdgeBedrockEngine` with Converse API, `LlmResponse` parsing, `extract_json`, validation (tool/shell/reply)
+- [x] Implement `EdgeInferenceEngine` trait for `EdgeBedrockEngine` (parse with timeout, suggest_recovery)
+- [x] Add `bedrock_recovery()` to recovery.rs (feature-gated, mirrors ollama_recovery)
+- [x] Wire into engine chain in main.rs: `[Ollama (if enabled), Bedrock (if enabled + feature), Fallback]`
+- [x] Add commented-out `[bedrock]` section to dev/agent.toml
+- [x] Tests: LlmResponse deserialization (tool/shell/reply/null), extract_json (raw/markdown/surrounding), validation (known/unknown tool, low confidence, empty shell/reply, sanitize pipe), config defaults
+- [x] 621 workspace tests passing (18 new bedrock tests with feature), clippy clean, fmt clean, svelte-check clean
 
 ## Phase 19d: Device Capability Profiles
 - [ ] Add device capability profile to heartbeat/shadow (has_journald, has_syslog, can_interfaces, etc.)

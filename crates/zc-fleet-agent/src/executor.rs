@@ -63,8 +63,12 @@ impl<'a> CommandExecutor<'a> {
         let start = Instant::now();
 
         // Fast path: intent already parsed by cloud
-        let (intent, tier) = if let Some(ref intent) = envelope.parsed_intent {
-            (intent.clone(), InferenceTier::Local)
+        let (intent, tier, engine_name) = if let Some(ref intent) = envelope.parsed_intent {
+            (
+                intent.clone(),
+                InferenceTier::Local,
+                envelope.engine.clone(),
+            )
         } else {
             // Try each engine in the chain; first Some wins
             let mut result = None;
@@ -77,7 +81,11 @@ impl<'a> CommandExecutor<'a> {
                         confidence = parsed.confidence,
                         "engine parsed command locally"
                     );
-                    result = Some((parsed, InferenceTier::Local));
+                    result = Some((
+                        parsed,
+                        InferenceTier::Local,
+                        Some(engine.engine_name().to_string()),
+                    ));
                     break;
                 }
             }
@@ -118,7 +126,7 @@ impl<'a> CommandExecutor<'a> {
 
         // Success? Return without attempts metadata.
         if response.status != CommandStatus::Failed {
-            return response;
+            return self.with_engine(response, engine_name);
         }
 
         // Non-recoverable error? Return with single attempt recorded.
@@ -128,7 +136,7 @@ impl<'a> CommandExecutor<'a> {
                 error = error_msg,
                 "failure is not recoverable — skipping retry"
             );
-            return self.with_attempts(response, vec![attempt1]);
+            return self.with_engine(self.with_attempts(response, vec![attempt1]), engine_name);
         }
 
         // Check timeout budget (15s total from start of attempt 1)
@@ -136,7 +144,7 @@ impl<'a> CommandExecutor<'a> {
         let remaining = budget.saturating_sub(attempt1_start.elapsed());
         if remaining < Duration::from_secs(2) {
             tracing::debug!("timeout budget exhausted — skipping recovery");
-            return self.with_attempts(response, vec![attempt1]);
+            return self.with_engine(self.with_attempts(response, vec![attempt1]), engine_name);
         }
 
         // ── Recovery ────────────────────────────────────────────
@@ -176,7 +184,10 @@ impl<'a> CommandExecutor<'a> {
             }
             match found {
                 Some(pair) => pair,
-                None => return self.with_attempts(response, vec![attempt1]),
+                None => {
+                    return self
+                        .with_engine(self.with_attempts(response, vec![attempt1]), engine_name);
+                }
             }
         };
 
@@ -198,7 +209,10 @@ impl<'a> CommandExecutor<'a> {
             recovery_source: Some(source),
         };
 
-        self.with_attempts(response2, vec![attempt1, attempt2])
+        self.with_engine(
+            self.with_attempts(response2, vec![attempt1, attempt2]),
+            engine_name,
+        )
     }
 
     /// Dispatch a single action (tool, shell, or reply) without recovery.
@@ -228,6 +242,16 @@ impl<'a> CommandExecutor<'a> {
         } else {
             None
         };
+        resp
+    }
+
+    /// Set the engine name on a response.
+    fn with_engine(
+        &self,
+        mut resp: CommandResponse,
+        engine_name: Option<String>,
+    ) -> CommandResponse {
+        resp.engine = engine_name;
         resp
     }
 
@@ -283,6 +307,7 @@ impl<'a> CommandExecutor<'a> {
                         responded_at: Utc::now(),
                         error: None,
                         attempts: None,
+                        engine: None,
                     }
                 } else {
                     let error_msg = data["error"]
@@ -301,6 +326,7 @@ impl<'a> CommandExecutor<'a> {
                         responded_at: Utc::now(),
                         error: Some(error_msg),
                         attempts: None,
+                        engine: None,
                     }
                 }
             }
@@ -316,6 +342,7 @@ impl<'a> CommandExecutor<'a> {
                 responded_at: Utc::now(),
                 error: Some(err),
                 attempts: None,
+                engine: None,
             },
         }
     }
@@ -348,6 +375,7 @@ impl<'a> CommandExecutor<'a> {
                 responded_at: Utc::now(),
                 error: Some("shell: command was empty after sanitization".into()),
                 attempts: None,
+                engine: None,
             };
         }
         if command_str != intent.tool_name {
@@ -389,6 +417,7 @@ impl<'a> CommandExecutor<'a> {
                     responded_at: Utc::now(),
                     error: None,
                     attempts: None,
+                    engine: None,
                 }
             }
             Err(e) => {
@@ -405,6 +434,7 @@ impl<'a> CommandExecutor<'a> {
                     responded_at: Utc::now(),
                     error: Some(format!("shell: {e}")),
                     attempts: None,
+                    engine: None,
                 }
             }
         }
@@ -437,6 +467,7 @@ impl<'a> CommandExecutor<'a> {
             responded_at: Utc::now(),
             error: None,
             attempts: None,
+            engine: None,
         }
     }
 
@@ -458,6 +489,7 @@ impl<'a> CommandExecutor<'a> {
             responded_at: Utc::now(),
             error: Some(message.to_string()),
             attempts: None,
+            engine: None,
         }
     }
 }

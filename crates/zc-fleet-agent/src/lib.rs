@@ -13,3 +13,6 @@ pub mod recovery;
 pub mod registry;
 pub mod shadow_sync;
 pub mod shell;
+
+#[cfg(feature = "bedrock")]
+pub mod bedrock;
