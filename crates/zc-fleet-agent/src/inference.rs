@@ -1,13 +1,48 @@
-//! Ollama local inference client for on-device NL command parsing.
+//! Edge inference engine abstraction and implementations.
 //!
-//! Calls the local Ollama HTTP API (`/api/chat`) to parse natural-language
-//! operator commands into structured intents. Supports three action types:
-//! - **tool**: Invoke one of 10 registered diagnostic tools
-//! - **shell**: Execute a safe system command on the device
-//! - **reply**: Return a conversational response (no execution)
+//! Defines the `EdgeInferenceEngine` trait for on-device NL command parsing,
+//! with two implementations:
+//! - **OllamaClient**: Calls the local Ollama HTTP API (`/api/chat`)
+//! - **FallbackReplyEngine**: Keyword matching for greetings/help/thanks (no LLM)
+//!
+//! The executor iterates a chain of engines; first `Some` wins.
 
+use std::time::Duration;
+
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use zc_protocol::commands::{ActionKind, ParsedIntent};
+use zc_protocol::commands::{ActionKind, ParsedIntent, RecoverySource};
+
+use crate::recovery::RecoveryContext;
+
+/// Trait for edge inference engines that parse natural-language commands.
+///
+/// The executor iterates a `&[&dyn EdgeInferenceEngine]` chain; the first
+/// engine to return `Some` wins. This makes adding new engines (e.g. Bedrock)
+/// a one-line vec push.
+#[async_trait]
+pub trait EdgeInferenceEngine: Send + Sync {
+    /// Human-readable name for logging.
+    fn engine_name(&self) -> &str;
+
+    /// Which `RecoverySource` variant this engine maps to.
+    fn recovery_source(&self) -> RecoverySource;
+
+    /// Attempt to parse `text` into a structured intent.
+    /// Returns `None` if the engine can't handle this input.
+    async fn parse(&self, text: &str) -> Option<ParsedIntent>;
+
+    /// Suggest a recovery intent after a tool/shell failure.
+    /// Default: no recovery capability.
+    #[allow(unused_variables)]
+    async fn suggest_recovery(
+        &self,
+        ctx: &RecoveryContext,
+        timeout: Duration,
+    ) -> Option<ParsedIntent> {
+        None
+    }
+}
 
 /// System prompt teaching three action types: tool, shell, reply.
 const SYSTEM_PROMPT: &str = r#"You are an AI agent running on an IoT edge device in a vehicle fleet. You can do three things:
@@ -82,7 +117,9 @@ Examples:
 - For conversation/greetings → action: reply
 - When unsure, prefer "reply" with a helpful message over returning nothing"#;
 
-/// Known tool names for validation. Must match the tools in SYSTEM_PROMPT.
+/// Known tool names for validation. Must match the tools in SYSTEM_PROMPT
+/// **and** the tools returned by `ToolRegistry::with_defaults()`.
+/// The `known_tools_match_registry` test catches drift between the two.
 const KNOWN_TOOLS: &[&str] = &[
     "read_dtcs",
     "read_vin",
@@ -256,7 +293,8 @@ impl OllamaClient {
         Self { client, config }
     }
 
-    /// Parse a natural-language command into a `ParsedIntent`.
+    /// Parse a natural-language command into a `ParsedIntent` using the
+    /// default system prompt.
     ///
     /// Supports three action types:
     /// - `tool`: validates tool_name against KNOWN_TOOLS
@@ -266,6 +304,16 @@ impl OllamaClient {
     /// Returns `None` if Ollama is unreachable, returns garbage, or
     /// confidence is below threshold.
     pub async fn parse(&self, text: &str) -> Option<ParsedIntent> {
+        self.parse_with_prompt(SYSTEM_PROMPT, text).await
+    }
+
+    /// Parse using a custom system prompt. Used by the recovery module to
+    /// ask Ollama for alternative suggestions after a tool failure.
+    pub async fn parse_with_prompt(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+    ) -> Option<ParsedIntent> {
         let url = format!("{}/api/chat", self.config.host);
 
         let body = ChatRequest {
@@ -273,11 +321,11 @@ impl OllamaClient {
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: SYSTEM_PROMPT,
+                    content: system_prompt,
                 },
                 ChatMessage {
                     role: "user",
-                    content: text,
+                    content: user_message,
                 },
             ],
             format: "json",
@@ -417,9 +465,126 @@ impl OllamaClient {
             action: ActionKind::Reply,
             tool_name: String::new(),
             tool_args: serde_json::json!({ "message": message }),
-            confidence: raw.confidence.max(1.0),
+            confidence: 1.0,
         })
     }
+}
+
+#[async_trait]
+impl EdgeInferenceEngine for OllamaClient {
+    fn engine_name(&self) -> &str {
+        "ollama"
+    }
+
+    fn recovery_source(&self) -> RecoverySource {
+        RecoverySource::Ollama
+    }
+
+    async fn parse(&self, text: &str) -> Option<ParsedIntent> {
+        // Delegate to the inherent method (which uses SYSTEM_PROMPT)
+        self.parse(text).await
+    }
+
+    async fn suggest_recovery(
+        &self,
+        ctx: &RecoveryContext,
+        timeout: Duration,
+    ) -> Option<ParsedIntent> {
+        crate::recovery::ollama_recovery(ctx, self, timeout).await
+    }
+}
+
+// ── FallbackReplyEngine ─────────────────────────────────────────
+
+/// Keyword patterns for the fallback reply engine.
+/// Each entry: (keywords to match, response message).
+const FALLBACK_PATTERNS: &[(&[&str], &str)] = &[
+    (
+        &["hello", "hi", "hey", "howdy", "greetings"],
+        "Hello! I'm the fleet agent for this device. How can I help?",
+    ),
+    (
+        &[
+            "help",
+            "what can you do",
+            "what do you do",
+            "capabilities",
+            "commands",
+        ],
+        "I can read vehicle diagnostics (DTCs, PIDs, VIN), analyze logs, run system commands, and monitor CAN bus traffic. Try asking me something!",
+    ),
+    (
+        &["thanks", "thank you", "thx", "ty", "cheers"],
+        "You're welcome! Let me know if you need anything else.",
+    ),
+    (
+        &["bye", "goodbye", "see you", "later"],
+        "Goodbye! I'll keep monitoring the fleet.",
+    ),
+    (
+        &["how are you", "you ok", "status"],
+        "I'm operational and monitoring the fleet. All systems nominal.",
+    ),
+];
+
+/// Last-resort inference engine that matches conversational keywords.
+///
+/// Handles greetings, help requests, thanks, and goodbyes without any LLM.
+/// Always placed at the end of the engine chain so that diagnostic queries
+/// are handled by smarter engines first.
+pub struct FallbackReplyEngine;
+
+impl FallbackReplyEngine {
+    /// Check if the input matches any fallback pattern.
+    /// Returns the response message if matched.
+    fn match_pattern(text: &str) -> Option<&'static str> {
+        let lower = text.trim().to_lowercase();
+        // Strip trailing punctuation for matching
+        let normalized = lower.trim_end_matches(|c: char| c.is_ascii_punctuation());
+
+        for &(keywords, response) in FALLBACK_PATTERNS {
+            for &kw in keywords {
+                if kw.contains(' ') {
+                    // Multi-word: check substring
+                    if normalized.contains(kw) {
+                        return Some(response);
+                    }
+                } else {
+                    // Single word: check if the entire input is just this word,
+                    // or if it appears as a word boundary match
+                    if normalized == kw || normalized.split_whitespace().any(|w| w == kw) {
+                        return Some(response);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl EdgeInferenceEngine for FallbackReplyEngine {
+    fn engine_name(&self) -> &str {
+        "fallback"
+    }
+
+    fn recovery_source(&self) -> RecoverySource {
+        // Fallback engine doesn't do recovery, but needs a variant.
+        // Re-use RuleBased since it's the closest semantic match.
+        RecoverySource::RuleBased
+    }
+
+    async fn parse(&self, text: &str) -> Option<ParsedIntent> {
+        let message = Self::match_pattern(text)?;
+        Some(ParsedIntent {
+            action: ActionKind::Reply,
+            tool_name: String::new(),
+            tool_args: serde_json::json!({ "message": message }),
+            confidence: 1.0,
+        })
+    }
+
+    // suggest_recovery: default None (no recovery capability)
 }
 
 #[cfg(test)]
@@ -781,5 +946,138 @@ enabled = false
         assert_eq!(config.model, "gemma:2b");
         assert_eq!(config.timeout_secs, 10);
         assert!(!config.enabled);
+    }
+
+    // ── Drift detection ─────────────────────────────────────────
+
+    #[test]
+    fn known_tools_match_registry() {
+        use crate::registry::ToolRegistry;
+        use std::collections::HashSet;
+
+        let registry = ToolRegistry::with_defaults();
+        let registry_names: HashSet<String> = registry.tool_names().into_iter().collect();
+        let known: HashSet<String> = KNOWN_TOOLS.iter().map(|s| s.to_string()).collect();
+
+        let in_known_not_registry: Vec<_> = known.difference(&registry_names).collect();
+        let in_registry_not_known: Vec<_> = registry_names.difference(&known).collect();
+
+        assert!(
+            in_known_not_registry.is_empty(),
+            "KNOWN_TOOLS has tools not in ToolRegistry: {in_known_not_registry:?}"
+        );
+        assert!(
+            in_registry_not_known.is_empty(),
+            "ToolRegistry has tools not in KNOWN_TOOLS: {in_registry_not_known:?}"
+        );
+    }
+
+    #[test]
+    fn reply_confidence_is_capped_at_one() {
+        // Ensure validate_reply_intent always produces confidence = 1.0,
+        // never > 1.0 (which .max(1.0) previously allowed).
+        let raw = RawIntent {
+            action: "reply".into(),
+            tool_name: None,
+            tool_args: serde_json::json!({}),
+            command: None,
+            message: Some("Hi there".into()),
+            confidence: 0.5,
+        };
+        let client = OllamaClient::new(OllamaConfig::default());
+        let intent = client.validate_reply_intent(raw).unwrap();
+        assert!(
+            (intent.confidence - 1.0).abs() < f64::EPSILON,
+            "reply confidence should be 1.0, got {}",
+            intent.confidence
+        );
+    }
+
+    // ── FallbackReplyEngine tests ───────────────────────────────
+
+    #[test]
+    fn fallback_matches_greeting() {
+        let msg = FallbackReplyEngine::match_pattern("hello");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("fleet agent"));
+    }
+
+    #[test]
+    fn fallback_matches_hi() {
+        assert!(FallbackReplyEngine::match_pattern("hi").is_some());
+    }
+
+    #[test]
+    fn fallback_matches_help() {
+        let msg = FallbackReplyEngine::match_pattern("help");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("diagnostics"));
+    }
+
+    #[test]
+    fn fallback_matches_what_can_you_do() {
+        let msg = FallbackReplyEngine::match_pattern("what can you do?");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("diagnostics"));
+    }
+
+    #[test]
+    fn fallback_matches_thanks() {
+        let msg = FallbackReplyEngine::match_pattern("thanks!");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("welcome"));
+    }
+
+    #[test]
+    fn fallback_matches_bye() {
+        let msg = FallbackReplyEngine::match_pattern("bye");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("Goodbye"));
+    }
+
+    #[test]
+    fn fallback_matches_how_are_you() {
+        let msg = FallbackReplyEngine::match_pattern("how are you?");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("operational"));
+    }
+
+    #[test]
+    fn fallback_case_insensitive() {
+        assert!(FallbackReplyEngine::match_pattern("HELLO").is_some());
+        assert!(FallbackReplyEngine::match_pattern("Hello!").is_some());
+        assert!(FallbackReplyEngine::match_pattern("HELP").is_some());
+    }
+
+    #[test]
+    fn fallback_no_match_diagnostic_queries() {
+        assert!(FallbackReplyEngine::match_pattern("read DTCs").is_none());
+        assert!(FallbackReplyEngine::match_pattern("show log stats").is_none());
+        assert!(FallbackReplyEngine::match_pattern("what's the CPU temperature?").is_none());
+        assert!(FallbackReplyEngine::match_pattern("monitor CAN bus").is_none());
+        assert!(FallbackReplyEngine::match_pattern("read engine RPM").is_none());
+    }
+
+    #[tokio::test]
+    async fn fallback_engine_parse_greeting() {
+        let engine = FallbackReplyEngine;
+        let intent = EdgeInferenceEngine::parse(&engine, "hello").await.unwrap();
+        assert_eq!(intent.action, ActionKind::Reply);
+        assert!(
+            intent.tool_args["message"]
+                .as_str()
+                .unwrap()
+                .contains("fleet agent")
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_engine_parse_no_match() {
+        let engine = FallbackReplyEngine;
+        assert!(
+            EdgeInferenceEngine::parse(&engine, "read DTCs")
+                .await
+                .is_none()
+        );
     }
 }

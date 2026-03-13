@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 17 complete — DTC description database (18,805 codes) + UDS FTB decoder
+**Status**: Phase 19b complete — Edge inference engine chain refactor (trait-based, extensible)
 
 ## Task Tracking
 

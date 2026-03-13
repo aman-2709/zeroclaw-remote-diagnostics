@@ -213,38 +213,65 @@ BCR requires vehicle speed wakeup (CAN 0x98) before responding to UDS. Generic E
 - [x] Execute wakeup automatically in `uds_query`/`uds_query_isotp` when profile has wakeup config
 - [x] Add NRC 0x78 ("response pending") retry logic in UDS query layer (generic, all ECUs)
 - [x] Tests: wakeup frame generation, wakeup execution before UDS, NRC 0x78 retry, profiles without wakeup unaffected
-- [ ] Deploy to S32G and verify BCR DTC reads succeed end-to-end via frontend
+- [x] Deploy to S32G and verify BCR DTC reads succeed end-to-end via frontend
 
-## Phase 19: Agent Recovery Loop — AI Retry on Tool Failure
-When a tool fails or a shell command errors, the executor should attempt intelligent
-recovery instead of returning the raw error. Tiered: rule-based recovery first (free,
-<1ms), then Ollama (local LLM, if available), then Bedrock via MQTT (cloud LLM fallback).
-
-### Recovery triggers
-- **Tool execution errors** (source not found, timeout, unknown ECU, etc.) → always retry
-- **Shell errors** (command not found, empty stdout) → always retry
-- **Tool success with empty data** → do NOT retry (empty is a valid answer)
-
-### Architecture
-- Recovery loop lives in executor.rs (edge-side), wrapping execute_single()
-- Max 2 attempts total (1 original + 1 retry), shared timeout budget (15s)
-- Recovery context includes: original query, tool attempted, args, error, available tools
-- Frontend shows attempt chain ("Attempt 1: failed → Attempt 2: success")
-- Full attempt history in CommandResponse metadata for audit trail
+## Phase 19a: Edge-Only Agent Recovery Loop
+When a tool/shell fails, the executor attempts intelligent recovery before returning
+the raw error. Rule-based recovery first (free, <1ms), then Ollama (local LLM fallback).
+Max 2 attempts total, 15s timeout budget.
 
 ### Tasks
-- [ ] Define `RecoveryContext` struct (original query, failed tool, error, available tools, device capabilities)
-- [ ] Add rule-based recovery rules in executor (e.g., syslog not found → query_journal, OBD timeout → try UDS equivalent)
-- [ ] Add `recover()` method to executor: rules → Ollama → Bedrock (tiered, like inference)
-- [ ] Add Ollama recovery prompt (tool failed with error X, original query Y, suggest alternative)
-- [ ] Add Bedrock recovery via MQTT request/response (new topic: `fleet/{id}/{id}/recovery/request|response`)
-- [ ] Wrap execute() in agent loop: attempt → check result → recover → retry (max 2 attempts)
-- [ ] Add `attempts` field to CommandResponse (Vec of attempt summaries with tool, args, result, duration)
-- [ ] Frontend: render attempt chain in CommandForm (show retry history, not just final result)
+- [x] Add `RecoverySource`, `AttemptSummary` types to zc-protocol (commands.rs)
+- [x] Add `attempts` field to `CommandResponse` (backward-compatible, skipped when None)
+- [x] Create `recovery.rs` module — `RecoveryContext`, `is_recoverable()`, rule-based mappings, Ollama recovery
+- [x] Rule-based recovery rules: syslog→journal, journal→syslog, OBD→UDS, BCR→BCF, VIN→UDS DID, sensors→thermal
+- [x] Add `parse_with_prompt()` to `OllamaClient` (custom system prompt for recovery)
+- [x] Refactor executor: extract `execute_action()`, add recovery loop wrapper
+- [x] Add `tool_names()` to `ToolRegistry`
+- [x] Forward `attempts` through cloud API (events.rs, mqtt_bridge.rs, routes/responses.rs)
+- [x] Frontend types: `RecoverySource`, `AttemptSummary` in command.ts + WsEvent
+- [x] Frontend: render attempt chain in CommandForm (recovery chain with status colors, source badges)
+- [x] Tests: is_recoverable (safety/blocked/injection/sensitive), rule-based rules (6 tool + 1 shell), no-match returns None, backward compat, roundtrip serialization
+- [x] Update E2E test: e2e_can_timeout_propagates now verifies recovery chain
+- [x] Fix: reply confidence clamping bug (`.max(1.0)` → `1.0`)
+- [x] Add KNOWN_TOOLS ↔ ToolRegistry drift-detection test
+- [x] Executor tests: rule-based log fallback, both-attempts-fail, non-recoverable skip, Ollama fallback, Ollama same-tool rejection, success-no-chain, attempt durations
+- [x] Strengthen E2E: verify attempt errors, recovery_source, durations, overall response status
+- [x] Cloud rules.rs: add greetings fall-through test (conversational queries → None, handled by edge)
+- [x] 604 tests passing, clippy clean, fmt clean, svelte-check clean
+
+## Phase 19b: Edge Inference Engine Chain Refactor
+Refactor edge executor from hardcoded `Option<&OllamaClient>` to a trait-based
+`&[&dyn EdgeInferenceEngine]` chain. Adding Bedrock later is just pushing another
+engine into the vec. FallbackReplyEngine handles greetings/help without any LLM.
+
+### Tasks
+- [x] Add `async-trait` dependency to zc-fleet-agent
+- [x] Define `EdgeInferenceEngine` trait (engine_name, recovery_source, parse, suggest_recovery)
+- [x] Implement `EdgeInferenceEngine` for `OllamaClient` (delegates to existing methods)
+- [x] Create `FallbackReplyEngine` — keyword matching for greetings/help/thanks/bye/status
+- [x] Refactor `CommandExecutor`: `ollama: Option<&OllamaClient>` → `engines: &[&dyn EdgeInferenceEngine]`
+- [x] Refactor executor inference: iterate engines, first `Some` wins
+- [x] Refactor executor recovery: `rule_based_recovery()` first, then iterate engines' `suggest_recovery()`
+- [x] Update `mqtt_loop::run()` signature to accept engine chain
+- [x] Update `main.rs`: build engine vec `[OllamaClient (if enabled), FallbackReplyEngine (always)]`
+- [x] Update E2E test harness + inference_paths.rs for new API
+- [x] Tests: FallbackReplyEngine patterns (greeting, help, thanks, bye, how-are-you, case insensitive, no-match on diagnostics)
+- [x] Tests: fallback-only chain handles greetings, doesn't match diagnostics, Ollama+fallback chain
+- [x] Verified on live fleet: "Hi, how are you doing?" handled by FallbackReplyEngine with Ollama disabled
+- [x] 618 tests passing (up from 604), clippy clean, fmt clean
+
+## Phase 19c: Bedrock Edge Inference Engine
+- [ ] Implement `EdgeInferenceEngine` for Bedrock (AWS Converse API, reuse cloud bedrock.rs patterns)
+- [ ] Add `BedrockConfig` to AgentConfig TOML (region, model_id, timeout)
+- [ ] Push Bedrock engine into chain: `[OllamaClient, BedrockEngine, FallbackReplyEngine]`
+- [ ] Bedrock `suggest_recovery()` for cloud-assisted recovery on tool failure
+- [ ] Cost/observability: log engine used per command, track fallback rates
+
+## Phase 19d: Device Capability Profiles
 - [ ] Add device capability profile to heartbeat/shadow (has_journald, has_syslog, can_interfaces, etc.)
 - [ ] Send device capabilities to cloud so first-attempt inference is more accurate
-- [ ] Tests: recovery on tool error, recovery on shell error, no recovery on success, no recovery on empty-but-valid, max retry limit, timeout budget respected
-- [ ] Cost/observability: log recovery tier used, track retry rate per tool for rule engine improvement
+- [ ] Track retry rate per tool for rule engine improvement
 
 ## Phase 20: Clear DTCs Tool
 - [ ] Safety review: require confirmation parameter (`"confirm": true`)

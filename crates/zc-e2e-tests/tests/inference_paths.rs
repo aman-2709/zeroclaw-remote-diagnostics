@@ -10,7 +10,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use helpers::TestHarness;
 use zc_fleet_agent::executor::CommandExecutor;
-use zc_fleet_agent::inference::{OllamaClient, OllamaConfig};
+use zc_fleet_agent::inference::{EdgeInferenceEngine, OllamaClient, OllamaConfig};
 use zc_protocol::commands::{ActionKind, CommandEnvelope, CommandStatus, ParsedIntent};
 
 /// All 13 tools are parseable through the RuleBasedEngine via the REST API.
@@ -153,8 +153,8 @@ async fn e2e_ollama_fallback_on_agent() {
         "admin",
     );
 
-    let executor =
-        CommandExecutor::new(&h.registry, &h.can_interface, &h.log_source, Some(&ollama));
+    let engines: Vec<&dyn EdgeInferenceEngine> = vec![&ollama];
+    let executor = CommandExecutor::new(&h.registry, &h.can_interface, &h.log_source, &engines);
     let agent_resp = executor.execute(&envelope).await;
 
     assert_eq!(agent_resp.status, CommandStatus::Completed);

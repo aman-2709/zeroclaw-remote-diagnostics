@@ -11,7 +11,7 @@ use zc_mqtt_channel::{Channel, IncomingMessage, MqttChannel, ShadowClient, class
 use zc_protocol::commands::{CommandResponse, CommandStatus};
 
 use crate::executor::CommandExecutor;
-use crate::inference::OllamaClient;
+use crate::inference::EdgeInferenceEngine;
 use crate::registry::ToolRegistry;
 use crate::shadow_sync::SharedShadowState;
 
@@ -30,10 +30,10 @@ pub async fn run(
     registry: &ToolRegistry,
     can_interface: &dyn CanInterface,
     log_source: &dyn LogSource,
-    ollama: Option<&OllamaClient>,
+    engines: &[&dyn EdgeInferenceEngine],
     shadow_state: &SharedShadowState,
 ) {
-    let executor = CommandExecutor::new(registry, can_interface, log_source, ollama);
+    let executor = CommandExecutor::new(registry, can_interface, log_source, engines);
     let shadow_client = ShadowClient::new(channel, channel.fleet_id(), channel.device_id());
 
     loop {
@@ -338,6 +338,7 @@ mod tests {
             latency_ms: 100,
             responded_at: chrono::Utc::now(),
             error: None,
+            attempts: None,
         }
     }
 

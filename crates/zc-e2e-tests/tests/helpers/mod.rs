@@ -123,7 +123,7 @@ impl TestHarness {
             &self.registry,
             &self.can_interface,
             &self.log_source,
-            None, // No Ollama for basic E2E — cloud provides parsed_intent
+            &[], // No engines for basic E2E — cloud provides parsed_intent
         );
         executor.execute(envelope).await
     }

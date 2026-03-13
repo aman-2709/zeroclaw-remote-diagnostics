@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
 use zc_fleet_agent::config::AgentConfig;
-use zc_fleet_agent::inference;
+use zc_fleet_agent::inference::{self, EdgeInferenceEngine, FallbackReplyEngine};
 use zc_fleet_agent::registry::ToolRegistry;
 use zc_fleet_agent::shadow_sync::{DeviceShadowState, SharedShadowState};
 use zc_fleet_agent::{heartbeat, mqtt_loop, shadow_sync};
@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     channel.subscribe_config().await?;
     tracing::info!("MQTT subscriptions active");
 
-    // ── Ollama local inference ──────────────────────────────────
+    // ── Inference engine chain ──────────────────────────────────
     let ollama_client = if config.ollama.enabled {
         tracing::info!(
             host = %config.ollama.host,
@@ -76,7 +76,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("ollama local inference disabled");
         None
     };
-    let ollama_ref = ollama_client.as_ref();
+    let fallback = FallbackReplyEngine;
+
+    // Build engine chain: Ollama first (if enabled), fallback always last
+    let mut engines: Vec<&dyn EdgeInferenceEngine> = Vec::new();
+    if let Some(ref ollama) = ollama_client {
+        engines.push(ollama);
+    }
+    engines.push(&fallback);
+    tracing::info!(
+        engine_count = engines.len(),
+        engines = ?engines.iter().map(|e| e.engine_name()).collect::<Vec<_>>(),
+        "inference engine chain initialized"
+    );
 
     // ── CAN interface ─────────────────────────────────────────
     let can_interface: Box<dyn zc_canbus_tools::CanInterface> = match config
@@ -137,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::select! {
         // Drive the MQTT event loop + dispatch commands
-        () = mqtt_loop::run(eventloop, &channel, &registry, &*can_interface, &log_source, ollama_ref, &shadow_state) => {
+        () = mqtt_loop::run(eventloop, &channel, &registry, &*can_interface, &log_source, &engines, &shadow_state) => {
             tracing::error!("MQTT loop exited unexpectedly");
         }
         // Publish periodic heartbeats
