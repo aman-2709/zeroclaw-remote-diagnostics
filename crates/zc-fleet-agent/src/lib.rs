@@ -9,6 +9,7 @@ pub mod executor;
 pub mod heartbeat;
 pub mod inference;
 pub mod mqtt_loop;
+pub mod recovery;
 pub mod registry;
 pub mod shadow_sync;
 pub mod shell;

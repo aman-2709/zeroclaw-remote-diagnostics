@@ -722,6 +722,10 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
         });
     }
 
+    // Conversational queries (greetings, help, thanks, etc.) are intentionally
+    // NOT handled here — they fall through to Ollama on the edge, which handles
+    // fuzzy/varied input far better than pattern matching.
+
     None
 }
 
@@ -1144,6 +1148,21 @@ mod tests {
         assert!(parse("hello world").is_none());
         assert!(parse("bake a pizza").is_none());
         assert!(parse("deploy the application").is_none());
+        assert!(parse("what's the weather like?").is_none());
+    }
+
+    #[test]
+    fn greetings_fall_through_to_ollama() {
+        // Conversational queries should NOT be handled by the rule engine.
+        // They return None so the edge agent's Ollama handles them instead.
+        assert!(parse("hello").is_none());
+        assert!(parse("hi").is_none());
+        assert!(parse("hey there").is_none());
+        assert!(parse("good morning").is_none());
+        assert!(parse("how are you?").is_none());
+        assert!(parse("help").is_none());
+        assert!(parse("what can you do?").is_none());
+        assert!(parse("thanks!").is_none());
     }
 
     // ── Helper tests ────────────────────────────────────────────

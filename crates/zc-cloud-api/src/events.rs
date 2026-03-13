@@ -28,6 +28,8 @@ pub enum WsEvent {
         error: Option<String>,
         latency_ms: Option<i64>,
         responded_at: DateTime<Utc>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attempts: Option<Vec<zc_protocol::commands::AttemptSummary>>,
     },
 
     /// A device heartbeat was received.
@@ -109,10 +111,12 @@ mod tests {
             error: None,
             latency_ms: Some(45),
             responded_at: Utc::now(),
+            attempts: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"command_response""#));
         assert!(json.contains("No DTCs found"));
+        assert!(!json.contains("attempts")); // skipped when None
     }
 
     #[test]

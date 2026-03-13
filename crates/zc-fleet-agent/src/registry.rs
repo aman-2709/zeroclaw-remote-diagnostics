@@ -117,6 +117,11 @@ impl ToolRegistry {
         tools
     }
 
+    /// Return the names of all registered tools.
+    pub fn tool_names(&self) -> Vec<String> {
+        self.index.keys().cloned().collect()
+    }
+
     /// Total number of registered tools.
     pub fn len(&self) -> usize {
         self.can_tools.len() + self.log_tools.len()

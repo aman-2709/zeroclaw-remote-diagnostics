@@ -52,7 +52,8 @@ async fn e2e_unrecognized_command_no_intent() {
     // Either way, the lifecycle completes without panic.
 }
 
-/// CAN tool timeout propagates as a failed command response.
+/// CAN tool timeout triggers recovery loop (read_vin → read_uds_did).
+/// With Phase 19a recovery, the executor retries with an alternative tool.
 #[tokio::test]
 async fn e2e_can_timeout_propagates() {
     let h = TestHarness::with_sample_data();
@@ -69,10 +70,45 @@ async fn e2e_can_timeout_propagates() {
 
     let agent_resp = h.agent_execute(&envelope).await;
 
-    // CAN tool with no mock data should fail
-    assert_eq!(agent_resp.status, CommandStatus::Failed);
-    assert!(agent_resp.error.is_some());
+    // Recovery loop attempts: read_vin (fails on mock CAN) → read_uds_did (BCR, DID F190).
+    // Both fail because MockCanInterface has no queued responses.
     assert_eq!(agent_resp.command_id, envelope.id);
+    let attempts = agent_resp
+        .attempts
+        .as_ref()
+        .expect("recovery should produce attempt chain");
+    assert_eq!(attempts.len(), 2);
+
+    // Attempt 1: read_vin fails
+    assert_eq!(attempts[0].tool_name, "read_vin");
+    assert_eq!(attempts[0].action, ActionKind::Tool);
+    assert!(!attempts[0].success);
+    assert!(
+        attempts[0].error.is_some(),
+        "failed attempt should have error"
+    );
+    assert!(
+        attempts[0].recovery_source.is_none(),
+        "first attempt should have no recovery source"
+    );
+
+    // Attempt 2: read_uds_did via rule-based recovery
+    assert_eq!(attempts[1].tool_name, "read_uds_did");
+    assert_eq!(attempts[1].action, ActionKind::Tool);
+    assert_eq!(
+        attempts[1].recovery_source,
+        Some(zc_protocol::commands::RecoverySource::RuleBased)
+    );
+    // Both durations should be recorded
+    assert!(attempts[0].duration_ms < 15_000);
+    assert!(attempts[1].duration_ms < 15_000);
+
+    // Overall response should be Failed (both attempts fail on mock CAN)
+    assert_eq!(
+        agent_resp.status,
+        CommandStatus::Failed,
+        "both attempts should fail on mock CAN with no queued responses"
+    );
 }
 
 /// Malformed MQTT response payload is silently dropped, no panic.
@@ -114,6 +150,7 @@ async fn e2e_response_for_unknown_command() {
         latency_ms: 10,
         responded_at: Utc::now(),
         error: None,
+        attempts: None,
     };
 
     // REST path: should return 404
@@ -145,6 +182,7 @@ async fn e2e_response_id_mismatch() {
         latency_ms: 10,
         responded_at: Utc::now(),
         error: None,
+        attempts: None,
     };
 
     // POST to the correct command path, but body has wrong ID

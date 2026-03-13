@@ -24,6 +24,19 @@ export interface CommandEnvelope {
 	timeout_secs: number;
 }
 
+export type RecoverySource = 'rule_based' | 'ollama';
+
+export interface AttemptSummary {
+	attempt: number;
+	action: ActionKind;
+	tool_name: string;
+	tool_args: Record<string, unknown>;
+	success: boolean;
+	error: string | null;
+	duration_ms: number;
+	recovery_source: RecoverySource | null;
+}
+
 export interface CommandResponse {
 	command_id: string;
 	device_id: string;
@@ -33,6 +46,7 @@ export interface CommandResponse {
 	error: string | null;
 	latency_ms: number;
 	timestamp: string;
+	attempts?: AttemptSummary[] | null;
 }
 
 export interface CommandRecord {

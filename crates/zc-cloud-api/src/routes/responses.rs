@@ -78,6 +78,7 @@ pub async fn ingest_response(
         error: resp.error.clone(),
         latency_ms: Some(resp.latency_ms as i64),
         responded_at: Utc::now(),
+        attempts: resp.attempts.clone(),
     });
 
     Ok(Json(serde_json::json!({ "status": "ok" })))
@@ -141,6 +142,7 @@ mod tests {
             latency_ms: 42,
             responded_at: Utc::now(),
             error: None,
+            attempts: None,
         };
 
         let response = app
@@ -185,6 +187,7 @@ mod tests {
             latency_ms: 10,
             responded_at: Utc::now(),
             error: None,
+            attempts: None,
         };
 
         let response = app
@@ -217,6 +220,7 @@ mod tests {
             latency_ms: 55,
             responded_at: Utc::now(),
             error: None,
+            attempts: None,
         };
 
         app.oneshot(
@@ -251,6 +255,7 @@ mod tests {
             latency_ms: 10,
             responded_at: Utc::now(),
             error: None,
+            attempts: None,
         };
 
         let response = app

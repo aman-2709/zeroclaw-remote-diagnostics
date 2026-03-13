@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import type { CommandEnvelope, WsEvent, DtcCode } from '$lib/types';
+	import type { CommandEnvelope, WsEvent, DtcCode, AttemptSummary } from '$lib/types';
 	import { wsStore } from '$lib/stores/websocket.svelte';
 	import { onMount } from 'svelte';
 
@@ -23,6 +23,7 @@
 	let responseData = $state<unknown | null>(null);
 	let responseError = $state<string | null>(null);
 	let elapsedSecs = $state(0);
+	let responseAttempts = $state<AttemptSummary[] | null>(null);
 
 	let unsub: (() => void) | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -44,11 +45,12 @@
 		if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 	}
 
-	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null) {
+	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null, attempts: AttemptSummary[] | null = null) {
 		cleanup();
 		awaitingResponse = false;
 		responseText = text;
 		responseData = data;
+		responseAttempts = attempts ?? null;
 		if (status === 'failed') {
 			responseError = errMsg || 'Command execution failed on device';
 		}
@@ -72,7 +74,7 @@
 		// Strategy 1: WebSocket push (instant)
 		unsub = wsStore.onEvent((event: WsEvent) => {
 			if (event.type === 'command_response' && event.command_id === commandId) {
-				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null);
+				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null, event.attempts ?? null);
 			}
 		});
 
@@ -99,9 +101,10 @@
 				const text = (resp?.response_text ?? obj.response_text) as string | null;
 				const data = (resp?.response_data ?? obj.response_data) as unknown | null;
 				const errMsg = (resp?.error ?? obj.error) as string | null;
+				const attempts = (resp?.attempts ?? obj.attempts) as AttemptSummary[] | null;
 
 				if (status && status !== 'pending' && status !== 'sent' && status !== 'received' && status !== 'executing') {
-					handleResponse(text ?? null, data ?? null, status, errMsg ?? null);
+					handleResponse(text ?? null, data ?? null, status, errMsg ?? null, attempts ?? null);
 				}
 			} catch {
 				// Poll failed — will retry next interval
@@ -120,6 +123,7 @@
 		responseText = null;
 		responseData = null;
 		responseError = null;
+		responseAttempts = null;
 
 		try {
 			const envelope = await api.sendCommand({
@@ -224,6 +228,17 @@
 				return 'Network';
 			default:
 				return cat;
+		}
+	}
+
+	function recoveryLabel(source: string | null): string {
+		switch (source) {
+			case 'rule_based':
+				return 'rule';
+			case 'ollama':
+				return 'ollama';
+			default:
+				return '';
 		}
 	}
 </script>
@@ -357,6 +372,26 @@
 			{#if responseError}
 				<div class="mt-2 rounded border border-danger/20 bg-danger/5 p-2 text-xs text-danger">
 					{responseError}
+				</div>
+			{/if}
+
+			{#if responseAttempts && responseAttempts.length > 1}
+				<div class="mt-2 rounded border border-border bg-surface/50 p-2 text-xs">
+					<span class="font-medium text-text-muted">Recovery chain:</span>
+					<div class="mt-1 flex flex-wrap items-center gap-1">
+						{#each responseAttempts as att, i}
+							<span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono {att.success ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger/70'}">
+								#{att.attempt} {att.tool_name}
+								<span class="text-text-muted">({att.duration_ms}ms)</span>
+							</span>
+							{#if att.recovery_source}
+								<span class="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">{recoveryLabel(att.recovery_source)}</span>
+							{/if}
+							{#if i < responseAttempts.length - 1}
+								<span class="text-text-muted">&rarr;</span>
+							{/if}
+						{/each}
+					</div>
 				</div>
 			{/if}
 		</div>

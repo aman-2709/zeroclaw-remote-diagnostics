@@ -62,6 +62,39 @@ pub struct ParsedIntent {
     pub confidence: f64,
 }
 
+/// Which recovery mechanism produced the retry intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoverySource {
+    /// Deterministic rule mapping (free, <1ms).
+    RuleBased,
+    /// Local Ollama LLM suggestion.
+    Ollama,
+}
+
+/// Summary of a single execution attempt within the recovery loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttemptSummary {
+    /// 1-based attempt number.
+    pub attempt: u8,
+    /// What kind of action was attempted.
+    pub action: ActionKind,
+    /// Tool name or shell command.
+    pub tool_name: String,
+    /// Arguments passed to the tool.
+    pub tool_args: serde_json::Value,
+    /// Whether this attempt succeeded.
+    pub success: bool,
+    /// Error message if the attempt failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Duration of this attempt in milliseconds.
+    pub duration_ms: u64,
+    /// How the recovery intent was produced (None for the first attempt).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_source: Option<RecoverySource>,
+}
+
 /// Response from device back to cloud after executing a command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse {
@@ -88,6 +121,9 @@ pub struct CommandResponse {
     /// Error message if status is Failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Recovery attempt chain (present only when >1 attempt was made).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub attempts: Option<Vec<AttemptSummary>>,
 }
 
 /// Lifecycle status of a command.
@@ -228,9 +264,125 @@ mod tests {
             latency_ms: 50,
             responded_at: Utc::now(),
             error: Some("CAN bus interface not available".into()),
+            attempts: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("CAN bus interface not available"));
         assert!(!json.contains("response_text")); // skip_serializing_if = None
+        assert!(!json.contains("attempts")); // skip_serializing_if = None
+    }
+
+    #[test]
+    fn attempt_summary_roundtrip() {
+        let attempt = AttemptSummary {
+            attempt: 1,
+            action: ActionKind::Tool,
+            tool_name: "search_logs".into(),
+            tool_args: serde_json::json!({"path": "/var/log/syslog"}),
+            success: false,
+            error: Some("No such file or directory".into()),
+            duration_ms: 45,
+            recovery_source: None,
+        };
+        let json = serde_json::to_string(&attempt).unwrap();
+        let deserialized: AttemptSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.attempt, 1);
+        assert!(!deserialized.success);
+        assert!(deserialized.recovery_source.is_none());
+    }
+
+    #[test]
+    fn attempt_summary_with_recovery_source() {
+        let attempt = AttemptSummary {
+            attempt: 2,
+            action: ActionKind::Tool,
+            tool_name: "query_journal".into(),
+            tool_args: serde_json::json!({"unit": "syslog"}),
+            success: true,
+            error: None,
+            duration_ms: 120,
+            recovery_source: Some(RecoverySource::RuleBased),
+        };
+        let json = serde_json::to_string(&attempt).unwrap();
+        assert!(json.contains("rule_based"));
+        let deserialized: AttemptSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.recovery_source,
+            Some(RecoverySource::RuleBased)
+        );
+    }
+
+    #[test]
+    fn command_response_with_attempts_roundtrip() {
+        let resp = CommandResponse {
+            command_id: Uuid::now_v7(),
+            correlation_id: Uuid::now_v7(),
+            device_id: "rpi-001".into(),
+            status: CommandStatus::Completed,
+            inference_tier: InferenceTier::Local,
+            response_text: Some("Found 3 journal entries".into()),
+            response_data: None,
+            latency_ms: 165,
+            responded_at: Utc::now(),
+            error: None,
+            attempts: Some(vec![
+                AttemptSummary {
+                    attempt: 1,
+                    action: ActionKind::Tool,
+                    tool_name: "search_logs".into(),
+                    tool_args: serde_json::json!({"path": "/var/log/syslog"}),
+                    success: false,
+                    error: Some("not found".into()),
+                    duration_ms: 45,
+                    recovery_source: None,
+                },
+                AttemptSummary {
+                    attempt: 2,
+                    action: ActionKind::Tool,
+                    tool_name: "query_journal".into(),
+                    tool_args: serde_json::json!({"unit": "syslog"}),
+                    success: true,
+                    error: None,
+                    duration_ms: 120,
+                    recovery_source: Some(RecoverySource::RuleBased),
+                },
+            ]),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("attempts"));
+        assert!(json.contains("rule_based"));
+        let deserialized: CommandResponse = serde_json::from_str(&json).unwrap();
+        let attempts = deserialized.attempts.unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].tool_name, "search_logs");
+        assert_eq!(attempts[1].tool_name, "query_journal");
+    }
+
+    #[test]
+    fn command_response_backward_compat_no_attempts() {
+        // Old JSON without "attempts" field should deserialize with None
+        let json = r#"{
+            "command_id": "00000000-0000-0000-0000-000000000000",
+            "correlation_id": "00000000-0000-0000-0000-000000000000",
+            "device_id": "rpi-001",
+            "status": "completed",
+            "inference_tier": "local",
+            "latency_ms": 50,
+            "responded_at": "2025-01-01T00:00:00Z"
+        }"#;
+        let resp: CommandResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.attempts.is_none());
+    }
+
+    #[test]
+    fn recovery_source_serialization() {
+        assert_eq!(
+            serde_json::to_string(&RecoverySource::RuleBased).unwrap(),
+            r#""rule_based""#
+        );
+        assert_eq!(
+            serde_json::to_string(&RecoverySource::Ollama).unwrap(),
+            r#""ollama""#
+        );
     }
 }
