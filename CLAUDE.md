@@ -54,6 +54,8 @@ The edge agent uses a trait-based `EdgeInferenceEngine` chain. Engines are tried
 
 Chain order: `[Ollama (if enabled), Bedrock (if enabled + feature), Fallback (always)]`
 
+Cloud engines run first; edge engines are a safety net for unparsed commands. The edge `EdgeBedrockEngine` exists for devices with internet but no GPU (e.g., S32G). See `docs/architecture.md` § "End-to-End Priority Chain" for the full 5-engine priority table and degradation scenarios.
+
 Build with Bedrock support: `cargo build -p zc-fleet-agent --features bedrock`
 
 Configure in `agent.toml`:

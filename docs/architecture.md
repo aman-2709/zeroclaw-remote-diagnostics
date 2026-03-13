@@ -834,6 +834,44 @@ Operator types: "is the powertrain healthy?"
                     Tool / Shell / Reply
 ```
 
+### End-to-End Priority Chain
+
+A single natural-language command passes through up to 5 inference engines across cloud
+and edge. Each engine either produces a `ParsedIntent` (stopping the chain) or returns
+`None` (falling through to the next). The cloud runs first; the edge is a safety net.
+
+| Priority | Location | Engine | Activation | Latency | Cost |
+|----------|----------|--------|-----------|---------|------|
+| 1 | Cloud | RuleBasedEngine | Always (built-in) | <1 ms | $0 |
+| 2 | Cloud | BedrockEngine | `INFERENCE_ENGINE=bedrock\|tiered` | 200–1500 ms | ~$0.001 |
+| 3 | Edge | OllamaClient | `[ollama] enabled = true` | 50–500 ms | $0 |
+| 4 | Edge | EdgeBedrockEngine | `--features bedrock` + `[bedrock] enabled = true` | 200–1500 ms | ~$0.001 |
+| 5 | Edge | FallbackReplyEngine | Always present | <1 ms | $0 |
+
+**Why do cloud and edge both have Bedrock?**
+
+They serve different scenarios. The cloud `BedrockEngine` is the primary LLM fallback —
+it runs on the cloud server with centrally managed AWS credentials. The edge
+`EdgeBedrockEngine` exists for devices that have internet access but **no GPU for Ollama**
+(e.g., the S32G). It lets those devices handle unparsed commands locally without depending
+on the cloud inference tier. In normal operation with cloud Bedrock enabled, the edge
+Bedrock engine is redundant — the cloud parses everything before it reaches the device.
+
+Edge Bedrock matters when:
+- Cloud uses `INFERENCE_ENGINE=local` (rules only, no cloud Bedrock)
+- Cloud is unreachable but the device can still reach AWS directly
+- You want inference cost attributed per-device rather than centrally
+
+**Degradation scenarios:**
+
+| Cloud credentials | Ollama | Edge Bedrock | What happens |
+|-------------------|--------|-------------|-------------|
+| Present | Running | Enabled | Cloud handles ~100%. Edge engines idle. |
+| Present | Down | Disabled | Cloud handles ~100%. Edge fallback for greetings only. |
+| **Missing** | Running | Disabled | Rules match ~80%. Ollama catches the rest. |
+| **Missing** | **Down** | **Disabled** | Rules match ~80%. FallbackReply catches greetings. Ambiguous queries fail. |
+| **Missing** | **Down** | **Enabled** | Rules match ~80%. Edge Bedrock catches the rest (device pays API cost). |
+
 ### RuleBasedEngine Patterns
 
 The engine uses case-insensitive substring matching. If the operator's phrase contains
