@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 19b complete — Edge inference engine chain refactor (trait-based, extensible)
+**Status**: Phase 19c complete — Bedrock edge inference engine (feature-gated cloud LLM fallback)
 
 ## Task Tracking
 
@@ -33,14 +33,37 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 
 ## Inference Strategy
 
-Cloud API uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
+### Cloud API
+
+Uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
 
 | Engine | Env Value | Handles | Latency | Cost |
 |--------|-----------|---------|---------|------|
 | Rule-based (local) | `local` (default) | Pattern matching for 10 tools + 10 shell commands, ~80% coverage | <1 ms | $0 |
 | Bedrock (cloud) | `bedrock` | Complex/ambiguous queries via AWS Converse API | 200–1500 ms | $0.001–$0.015/query |
 
-Edge agent also runs Ollama (local LLM) for commands that arrive without a pre-parsed intent.
+### Edge Agent — Inference Engine Chain
+
+The edge agent uses a trait-based `EdgeInferenceEngine` chain. Engines are tried in order; first `Some` wins:
+
+| Engine | Feature gate | Handles | Latency | Cost |
+|--------|-------------|---------|---------|------|
+| Ollama (`OllamaClient`) | always available | Local LLM inference (phi3:mini) | 50–500 ms | $0 |
+| Bedrock (`EdgeBedrockEngine`) | `--features bedrock` | Cloud LLM fallback (Nova Lite) via AWS Converse API | 200–1500 ms | ~$0.001/query |
+| Fallback (`FallbackReplyEngine`) | always available | Keyword matching for greetings/help/thanks/status | <1 ms | $0 |
+
+Chain order: `[Ollama (if enabled), Bedrock (if enabled + feature), Fallback (always)]`
+
+Build with Bedrock support: `cargo build -p zc-fleet-agent --features bedrock`
+
+Configure in `agent.toml`:
+```toml
+[bedrock]
+enabled = true
+region = "us-east-1"
+model_id = "us.amazon.nova-lite-v1:0"
+timeout_secs = 15
+```
 
 ## PoC Scope
 - 10–50 ARM devices (Raspberry Pi 4/5 or industrial SBCs) with CAN bus adapters
@@ -94,6 +117,9 @@ cargo build --workspace
 
 # Build release (optimized for edge devices)
 cargo build --profile release-edge -p zc-fleet-agent
+
+# Build fleet agent with Bedrock edge inference (feature-gated)
+cargo build -p zc-fleet-agent --features bedrock
 
 # Test all crates
 cargo test --workspace

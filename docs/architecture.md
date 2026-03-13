@@ -101,21 +101,28 @@ correct edge action — a diagnostic tool, a system command, or a conversational
 │  zc-fleet-agent (Rust binary, ~8.8 MB)                                  │
 │  ┌────────────────┐  ┌──────────────┐  ┌────────────────────────────┐   │
 │  │ CommandExecutor│  │ ToolRegistry │  │ Shell Executor             │   │
-│  │ ActionKind     │  │ 10 tools     │  │ 21-command allowlist       │   │
+│  │ ActionKind     │  │ 13 tools     │  │ 21-command allowlist       │   │
 │  │ routing        │  │ O(1) lookup  │  │ injection detection        │   │
 │  └────────────────┘  └──────────────┘  └────────────────────────────┘   │
-│  ┌────────────────┐  ┌──────────────┐  ┌────────────────────────────┐   │
-│  │ OllamaClient   │  │ zc-canbus-   │  │ zc-log-tools               │   │
-│  │ phi3:mini LLM  │  │ tools        │  │ 5 log analysis tools       │   │
-│  │ local inference│  │ 5 OBD-II     │  │ syslog/journald/json/text  │   │
-│  └────────────────┘  │ tools        │  └────────────────────────────┘   │
-│                       └──────────────┘                                   │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │ EdgeInferenceEngine chain (trait-based, first Some wins):         │  │
+│  │  1. OllamaClient (phi3:mini, $0)         — if [ollama] enabled   │  │
+│  │  2. EdgeBedrockEngine (Nova Lite, cloud)  — if --features bedrock │  │
+│  │  3. FallbackReplyEngine (keywords)        — always present        │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────┐  ┌────────────────────────────┐                       │
+│  │ zc-canbus-   │  │ zc-log-tools               │                       │
+│  │ tools        │  │ 5 log analysis tools       │                       │
+│  │ 8 CAN/UDS    │  │ syslog/journald/json/text  │                       │
+│  │ tools        │  └────────────────────────────┘                       │
+│  └──────────────┘                                                        │
 │  Background tasks: mqtt_loop + heartbeat (30s) + shadow_sync (60s)       │
 │                                                                          │
 │  Hardware interfaces:                                                    │
-│  CAN bus adapter ──► SocketCanInterface (Phase 2; MockCanInterface now)  │
+│  CAN bus adapter ──► SocketCanInterface / MockCanInterface               │
 │  /var/log/syslog ──► FileLogSource                                       │
 │  Ollama HTTP API ──► http://localhost:11434                              │
+│  AWS Bedrock     ──► Converse API (feature-gated)                        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -509,20 +516,24 @@ shadow_client.subscribe_delta()     // subscribe to shadow/delta
 ```
 main.rs
   1. Load AgentConfig from TOML file
-  2. ToolRegistry::with_defaults()        → 10 tools indexed by name
+  2. ToolRegistry::with_defaults()        → 13 tools indexed by name
   3. MqttChannel::new() or new_plaintext()
   4. subscribe_commands()                 → command/request + broadcast/commands
      subscribe_shadow_delta()             → shadow/delta
      subscribe_config()                   → config/update
-  5. OllamaClient::new() if config.ollama.enabled
-  6. MockCanInterface (real: SocketCanInterface in Phase 2)
+  5. Build EdgeInferenceEngine chain:
+       engines = []
+       if config.ollama.enabled   → push OllamaClient
+       if config.bedrock.enabled  → push EdgeBedrockEngine (feature-gated)
+       always                     → push FallbackReplyEngine
+  6. SocketCanInterface or MockCanInterface (based on platform + config)
   7. FileLogSource
   8. SharedShadowState = Arc<RwLock<DeviceShadowState>>
   9. tokio::select! {
-       mqtt_loop::run(...)    ← command dispatch (runs forever)
-       heartbeat::run(...)    ← every 30s
-       shadow_sync::run(...)  ← every 60s
-       ctrl_c                 ← graceful shutdown
+       mqtt_loop::run(engines, ...)  ← command dispatch (runs forever)
+       heartbeat::run(...)           ← every 30s
+       shadow_sync::run(...)         ← every 60s
+       ctrl_c                        ← graceful shutdown
      }
 ```
 
@@ -547,6 +558,13 @@ host = "http://localhost:11434"
 model = "phi3:mini"
 timeout_secs = 10
 enabled = true
+
+# Requires --features bedrock at compile time
+[bedrock]
+enabled = false
+region = "us-east-1"
+model_id = "us.amazon.nova-lite-v1:0"
+timeout_secs = 15
 ```
 
 ### CommandExecutor
@@ -559,9 +577,12 @@ CommandEnvelope received
         ▼
 ParsedIntent present in envelope?
     YES ──► use it directly (cloud already parsed)
-    NO  ──► OllamaClient.parse(natural_language)
-              SUCCESS ──► use Ollama intent
-              FAIL    ──► return error CommandResponse
+    NO  ──► iterate EdgeInferenceEngine chain:
+              1. OllamaClient.parse()     (if enabled)
+              2. EdgeBedrockEngine.parse() (if enabled + feature)
+              3. FallbackReplyEngine.parse() (always)
+              first Some(intent) wins
+              ALL None ──► return error CommandResponse
         │
         ▼
 Route on ActionKind:
@@ -636,7 +657,7 @@ tokio::process::Command::new(program).args(args)
 
 ### Background Tasks
 
-**heartbeat::run()**: Publishes `Heartbeat` every 30 s (configurable). Includes uptime, Ollama service status, CAN interface status, agent version.
+**heartbeat::run()**: Publishes `Heartbeat` every 30 s (configurable). Includes uptime, service statuses (Ollama, Bedrock, CAN), agent version.
 
 **shadow_sync::run()**: Publishes `ShadowUpdate` (via `ShadowClient::report_state`) every 60 s. Payload includes tool count, service statuses, last command metadata. Cloud processes update, computes delta vs. desired, publishes `ShadowDelta` back if non-empty.
 
@@ -794,11 +815,20 @@ Operator types: "is the powertrain healthy?"
               │                           │
               │  parsed_intent present?   │
               │  YES: use it directly     │
-              │  NO:  ┌─────────────────┐ │
-              │       │  OllamaClient   │ │
-              │       │  phi3:mini      │ │
-              │       │  50–500 ms, $0  │ │
-              │       └─────────────────┘ │
+              │  NO:  EdgeInferenceEngine │
+              │       chain (first wins): │
+              │  ┌─────────────────┐      │
+              │  │ OllamaClient    │ $0   │
+              │  │ phi3:mini       │      │
+              │  └────────┬────────┘      │
+              │  ┌────────▼────────┐      │
+              │  │ EdgeBedrock     │ $$   │
+              │  │ (feature-gated) │      │
+              │  └────────┬────────┘      │
+              │  ┌────────▼────────┐      │
+              │  │ FallbackReply   │ $0   │
+              │  │ (keywords)      │      │
+              │  └─────────────────┘      │
               └───────────┬───────────────┘
                           │ ActionKind routed
                     Tool / Shell / Reply
@@ -859,7 +889,11 @@ Uses the AWS SDK `bedrockruntime::converse()` API. Sends a system prompt describ
 
 `extract_json()` helper handles models that wrap JSON in markdown code fences. A 15 s timeout wraps the SDK call (cold starts can take 8–10 s).
 
-### Ollama (On-Device)
+### Edge Inference Engine Chain
+
+The fleet agent uses a trait-based `EdgeInferenceEngine` chain (defined in `zc-fleet-agent`). Each engine implements `parse()` and `suggest_recovery()`. The executor iterates engines in order; the first `Some(ParsedIntent)` wins.
+
+#### OllamaClient
 
 `OllamaClient` calls `POST http://localhost:11434/api/chat` with `format: "json"` and `stream: false`. Returns a `ChatResponse` with a `message.content` JSON string. Validates the JSON against three action types:
 
@@ -868,6 +902,16 @@ Uses the AWS SDK `bedrockruntime::converse()` API. Sends a system prompt describ
 - `reply`: message field must be non-empty
 
 Graceful fallbacks handle phi3:mini quirks: if `action` field contains a tool name directly (phi3 sometimes does this), it's treated as `action=tool`.
+
+#### EdgeBedrockEngine (feature-gated: `--features bedrock`)
+
+Uses the AWS SDK `bedrockruntime::converse()` API with the same `LlmResponse` JSON schema as the cloud Bedrock engine. Configured via `[bedrock]` section in agent.toml (region, model_id, timeout_secs). The `[bedrock]` config section is always deserializable; the engine is only instantiated when the `bedrock` feature is compiled in and `enabled = true`.
+
+Validates responses identically to `OllamaClient`: tool_name must be in `KNOWN_TOOLS`, shell commands are sanitized, and low-confidence results are rejected.
+
+#### FallbackReplyEngine
+
+Keyword matching for conversational queries (greetings, help, thanks, bye, status). Returns `ActionKind::Reply` with a canned message. Always present as the last engine in the chain — ensures the agent can respond to basic conversational queries even without any LLM.
 
 ---
 

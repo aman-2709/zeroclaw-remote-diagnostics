@@ -18,8 +18,8 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
                │ MQTT (AWS IoT Core, mTLS)
 ┌──────────────▼──────────────────────────────────────────────────┐
 │  Edge Agent (Rust / ZeroClaw)                                   │
-│  CAN bus tools (5) · Log tools (5) · MQTT channel · Heartbeat  │
-│  Local LLM inference (Ollama) · Tool/Shell/Reply agent mode     │
+│  CAN bus tools (8) · Log tools (5) · MQTT channel · Heartbeat  │
+│  Inference chain: Ollama → Bedrock (opt) → Fallback · Agent mode│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -27,20 +27,26 @@ Intelligent command-and-control platform for IoT device fleets (primarily connec
 
 | Layer | Stack | Purpose |
 |-------|-------|---------|
-| **Edge** | Rust (ZeroClaw runtime), Ollama | On-device AI inference, CAN/OBD-II diagnostics, log analysis |
+| **Edge** | Rust (ZeroClaw runtime), Ollama, Bedrock (optional) | On-device AI inference chain, CAN/OBD-II diagnostics, log analysis |
 | **Cloud** | Rust (Axum), PostgreSQL, AWS IoT Core, AWS Bedrock | Command routing, NL inference fallback, device registry, telemetry |
 | **Frontend** | SvelteKit 5, Tailwind CSS 4 | Fleet dashboard, device management, real-time command interface |
 
 ### Inference Strategy
 
-The cloud API uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
+**Cloud API** uses one inference engine at a time, configured via `INFERENCE_ENGINE` env var:
 
 | Engine | Env Value | Handles | Latency | Cost |
 |--------|-----------|---------|---------|------|
 | Rule-based (local) | `local` (default) | Pattern matching for 10 tools + 10 shell commands, ~80% coverage | <1 ms | $0 |
 | Bedrock (cloud) | `bedrock` | Complex/ambiguous queries via AWS Converse API | 200–1500 ms | ~$0.001/query |
 
-Edge agent also runs Ollama (local LLM) for commands that arrive without a pre-parsed intent.
+**Edge agent** uses a trait-based `EdgeInferenceEngine` chain for commands that arrive without a pre-parsed intent. Engines are tried in order; first match wins:
+
+| Engine | Activation | Handles | Latency | Cost |
+|--------|-----------|---------|---------|------|
+| Ollama | `[ollama] enabled = true` | Local LLM (phi3:mini) | 50–500 ms | $0 |
+| Bedrock | `--features bedrock` + `[bedrock] enabled = true` | Cloud LLM fallback (Nova Lite) | 200–1500 ms | ~$0.001/query |
+| Fallback | always active | Keyword matching (greetings, help, thanks) | <1 ms | $0 |
 
 ## Project Structure
 
@@ -127,8 +133,11 @@ Supports 4 log formats with auto-detection: syslog (RFC 3164/5424), journald, JS
 # Build all crates
 cargo build --workspace
 
-# Run all tests (402 tests, no external dependencies required)
+# Run all tests (621 tests, no external dependencies required)
 cargo test --workspace
+
+# Build fleet agent with Bedrock edge inference (feature-gated)
+cargo build -p zc-fleet-agent --features bedrock
 
 # Lint
 cargo clippy --workspace -- -D warnings
@@ -165,6 +174,8 @@ cd frontend && pnpm install && pnpm dev -- --port 5174
 ```
 
 To use Bedrock cloud inference instead, set `INFERENCE_ENGINE=bedrock` plus AWS credentials in Terminal 2 (see [Bedrock Cloud Inference](#bedrock-cloud-inference) below).
+
+To enable Bedrock on the **edge agent**, build with `--features bedrock` and uncomment the `[bedrock]` section in `dev/agent.toml` (see [Edge Bedrock Inference](#edge-bedrock-inference) below).
 
 ### Run the Cloud API
 
@@ -213,6 +224,32 @@ Startup logs confirm the active engine:
 "inference engine: bedrock (cloud LLM)"    # INFERENCE_ENGINE=bedrock
 "inference engine: local (rule-based)"     # INFERENCE_ENGINE=local (default)
 ```
+
+### Edge Bedrock Inference
+
+The fleet agent supports an optional Bedrock engine in its inference chain, feature-gated behind `--features bedrock`. When enabled, the chain is: Ollama (free) → Bedrock (cloud) → Fallback (keyword). This lets devices without Ollama/GPU still handle complex queries via cloud LLM.
+
+```bash
+# Build with Bedrock support
+cargo build -p zc-fleet-agent --features bedrock
+
+# Run (AWS credentials from environment)
+RUST_LOG=info cargo run -p zc-fleet-agent --features bedrock -- dev/agent.toml
+```
+
+Enable in `dev/agent.toml`:
+
+```toml
+[bedrock]
+enabled = true
+region = "us-east-1"            # must support the chosen model
+model_id = "us.amazon.nova-lite-v1:0"
+timeout_secs = 15
+```
+
+The `[bedrock]` section is always deserializable (config parsing doesn't require the feature flag). The engine is only instantiated when compiled with `--features bedrock` **and** `enabled = true`.
+
+Requires the same AWS credentials and `bedrock:InvokeModel` permission as the cloud Bedrock engine.
 
 ### Run the Frontend
 

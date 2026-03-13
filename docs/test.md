@@ -3,7 +3,7 @@
 Test the complete command lifecycle: curl → cloud API → MQTT → fleet agent → action execution → response back.
 
 The fleet agent supports three action types (Phase 8 — Agent Mode):
-- **Tool** — routes to one of 10 diagnostic tools (5 CAN + 5 log)
+- **Tool** — routes to one of 13 diagnostic tools (8 CAN + 5 log)
 - **Shell** — runs a safe system command on the device (allowlisted, injection-blocked)
 - **Reply** — conversational response, no action taken
 
@@ -48,10 +48,10 @@ Wait for: `"listening","addr":"0.0.0.0:3002"`
 
 ### Terminal 2 — Cloud API (with Bedrock fallback)
 
-Add AWS credentials and `BEDROCK_ENABLED=true` to enable the tiered inference engine (rule-based → Bedrock):
+Add AWS credentials and `INFERENCE_ENGINE=bedrock` to use Bedrock cloud inference:
 
 ```bash
-BEDROCK_ENABLED=true \
+INFERENCE_ENGINE=bedrock \
 BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0 \
 AWS_ACCESS_KEY_ID=AKIA... \
 AWS_SECRET_ACCESS_KEY=... \
@@ -66,7 +66,7 @@ RUST_LOG=info \
 cargo run -p zc-cloud-api
 ```
 
-Wait for: `"inference engine active","inference_tier":"tiered"`
+Wait for: `"inference engine: bedrock (cloud LLM)"`
 
 ### Terminal 3 — Fleet Agent
 
@@ -336,7 +336,7 @@ aws bedrock-runtime invoke-model \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BEDROCK_ENABLED` | `false` | Set `true` to build TieredEngine |
+| `INFERENCE_ENGINE` | `local` | `local` (rule-based), `bedrock` (cloud LLM), or `tiered` (rules → Bedrock) |
 | `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model ID |
 | `BEDROCK_TIMEOUT_SECS` | `15` | Per-request timeout (cold starts ~8-10s) |
 | `AWS_DEFAULT_REGION` | from profile | Must support the chosen model |
@@ -344,7 +344,7 @@ aws bedrock-runtime invoke-model \
 ### Start Cloud API with Bedrock
 
 ```bash
-BEDROCK_ENABLED=true \
+INFERENCE_ENGINE=bedrock \
 AWS_DEFAULT_REGION=us-east-1 \
 PORT=3002 \
 MQTT_ENABLED=true \
@@ -359,10 +359,10 @@ cargo run -p zc-cloud-api
 Verify startup logs show:
 ```
 "aws region resolved","region":"us-east-1"
-"inference engine active","inference_tier":"tiered"
+"inference engine: bedrock (cloud LLM)"
 ```
 
-Without `BEDROCK_ENABLED=true`, logs show `"inference_tier":"rule_based"`.
+Without `INFERENCE_ENGINE=bedrock`, logs show `"inference engine: local (rule-based)"`.
 
 ### Test: Rule-Based Hit (no Bedrock call)
 
@@ -398,10 +398,93 @@ Expected: `"inference_tier": "bedrock"` — rule-based engine missed, Bedrock cl
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `inference_tier: "rule_based"` despite BEDROCK_ENABLED | Missing env var | Ensure `BEDROCK_ENABLED=true` (not `1`) |
+| `inference_tier: "rule_based"` despite setting bedrock | Wrong env var | Ensure `INFERENCE_ENGINE=bedrock` (not `BEDROCK_ENABLED`) |
 | `bedrock inference timed out` | Cold start or slow network | Increase `BEDROCK_TIMEOUT_SECS=30` |
 | `bedrock converse error: AccessDenied` | IAM permissions | Add `bedrock:InvokeModel` to your role/user |
 | `bedrock converse error: ResourceNotFound` | Wrong region/model | Check `AWS_DEFAULT_REGION` supports `BEDROCK_MODEL_ID` |
+
+## 11. Edge Bedrock Inference
+
+Test the Bedrock inference engine running **on the edge agent** (feature-gated). This enables cloud LLM fallback directly on-device, useful for devices without Ollama/GPU.
+
+### Prerequisites
+
+- AWS credentials configured (same as cloud Bedrock — `bedrock:InvokeModel` permission)
+- Fleet agent compiled with `--features bedrock`
+
+### Build & Run
+
+```bash
+# Build with Bedrock feature
+cargo build -p zc-fleet-agent --features bedrock
+
+# Enable [bedrock] in dev/agent.toml (uncomment the section):
+# [bedrock]
+# enabled = true
+# region = "us-east-1"
+# model_id = "us.amazon.nova-lite-v1:0"
+# timeout_secs = 15
+
+# Run (AWS credentials from environment or profile)
+RUST_LOG=info cargo run -p zc-fleet-agent --features bedrock -- dev/agent.toml
+```
+
+### Test: Bedrock Handles Unparsed Command
+
+Send a command that the cloud rule engine won't match (so it arrives at the edge without a `parsed_intent`). With Ollama disabled, Bedrock should handle it:
+
+1. Set `enabled = false` under `[ollama]` and `enabled = true` under `[bedrock]` in `dev/agent.toml`
+2. Start the agent with `--features bedrock`
+3. Send an ambiguous command:
+
+```bash
+curl -s http://localhost:3002/api/v1/commands \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id": "dev-001",
+    "fleet_id": "local-fleet",
+    "command": "is the powertrain healthy?",
+    "initiated_by": "aman"
+  }' | python3 -m json.tool
+```
+
+Expected in agent logs:
+- `"edge inference engine used","engine":"bedrock"` — Bedrock parsed the command
+- Command response includes `"inference_tier": "bedrock"`
+
+### Test: Chain Ordering (Ollama → Bedrock → Fallback)
+
+With both Ollama and Bedrock enabled, Ollama should be tried first:
+
+1. Set `enabled = true` for both `[ollama]` and `[bedrock]`
+2. Send a command — agent logs should show Ollama handling it (Bedrock not called)
+
+### Test: Fallback-Only (No LLM)
+
+With both Ollama and Bedrock disabled, only `FallbackReplyEngine` is active:
+
+1. Set `enabled = false` for both `[ollama]` and `[bedrock]`
+2. Build **without** `--features bedrock`
+3. Greetings ("hello", "how are you?") → handled by Fallback
+4. Diagnostic queries ("read DTCs") → fail (no engine can parse)
+
+### Test: Recovery via Bedrock
+
+When a tool fails and rule-based recovery returns `None`, the Bedrock engine can suggest an alternative:
+
+1. Enable Bedrock, disable Ollama
+2. Send a command that triggers a tool failure (e.g., CAN tool on mock hardware)
+3. Check `response.attempts` — second attempt should show `"recovery_source": "bedrock"`
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `"no inference engine could parse"` | Bedrock not compiled in | Rebuild with `--features bedrock` |
+| `"bedrock config not found"` | Missing `[bedrock]` section | Add `[bedrock]` to agent.toml |
+| `"bedrock inference timed out"` | Cold start or slow network | Increase `timeout_secs = 30` in agent.toml |
+| `"bedrock converse error: AccessDenied"` | IAM permissions | Add `bedrock:InvokeModel` to your role/user |
+| Ollama handles everything, Bedrock never called | Chain ordering | Ollama is tried first — disable it to test Bedrock directly |
 
 ## Cleanup
 
