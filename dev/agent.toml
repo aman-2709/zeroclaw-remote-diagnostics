@@ -21,3 +21,8 @@ enabled = true
 region = "us-east-2"
 model_id = "us.amazon.nova-lite-v1:0"
 timeout_secs = 15
+
+[agentic]
+enabled = true
+max_steps = 5
+max_time_secs = 30

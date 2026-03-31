@@ -102,6 +102,8 @@ async fn e2e_pre_parsed_intent_used() {
         tool_name: "log_stats".into(),
         tool_args: json!({"path": "/var/log/syslog"}),
         confidence: 0.95,
+
+        reasoning: None,
     });
 
     let agent_resp = h.agent_execute(&envelope).await;

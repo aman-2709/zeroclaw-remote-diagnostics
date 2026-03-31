@@ -46,6 +46,37 @@ impl Default for BedrockConfig {
     }
 }
 
+/// Configuration for the agentic reasoning loop (multi-step commands).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgenticConfig {
+    /// Whether multi-step reasoning is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum tool/shell executions per command.
+    #[serde(default = "default_agentic_max_steps")]
+    pub max_steps: u8,
+    /// Total timeout for multi-step commands in seconds.
+    #[serde(default = "default_agentic_max_time_secs")]
+    pub max_time_secs: u16,
+}
+
+fn default_agentic_max_steps() -> u8 {
+    5
+}
+fn default_agentic_max_time_secs() -> u16 {
+    30
+}
+
+impl Default for AgenticConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_steps: default_agentic_max_steps(),
+            max_time_secs: default_agentic_max_time_secs(),
+        }
+    }
+}
+
 /// Top-level configuration for the fleet agent.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
@@ -74,6 +105,9 @@ pub struct AgentConfig {
     /// AWS Bedrock cloud inference settings. Optional — defaults to disabled.
     #[serde(default)]
     pub bedrock: BedrockConfig,
+    /// Agentic loop settings (multi-step reasoning). Optional — defaults to disabled.
+    #[serde(default)]
+    pub agentic: AgenticConfig,
 }
 
 fn default_heartbeat_interval() -> u64 {
@@ -247,6 +281,49 @@ timeout_secs = 10
             "anthropic.claude-3-haiku-20240307-v1:0"
         );
         assert_eq!(config.bedrock.timeout_secs, 10);
+    }
+
+    #[test]
+    fn deserialize_missing_agentic_uses_defaults() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert!(!config.agentic.enabled);
+        assert_eq!(config.agentic.max_steps, 5);
+        assert_eq!(config.agentic.max_time_secs, 30);
+    }
+
+    #[test]
+    fn deserialize_custom_agentic_config() {
+        let toml = r#"
+fleet_id = "fleet-alpha"
+device_id = "rpi-001"
+
+[mqtt]
+broker_host = "broker.example.com"
+client_id = "rpi-001"
+client_cert_path = "/certs/cert.pem"
+client_key_path = "/certs/key.pem"
+ca_cert_path = "/certs/ca.pem"
+
+[agentic]
+enabled = true
+max_steps = 3
+max_time_secs = 15
+"#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert!(config.agentic.enabled);
+        assert_eq!(config.agentic.max_steps, 3);
+        assert_eq!(config.agentic.max_time_secs, 15);
     }
 
     #[test]

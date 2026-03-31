@@ -46,6 +46,8 @@ pub enum ActionKind {
     Shell,
     /// Return a conversational reply (no tool or shell execution).
     Reply,
+    /// Execute a step and continue the agentic loop (multi-step reasoning).
+    Continue,
 }
 
 /// Parsed intent extracted from natural language by the LLM.
@@ -64,6 +66,9 @@ pub struct ParsedIntent {
     pub tool_args: serde_json::Value,
     /// LLM confidence score (0.0 - 1.0).
     pub confidence: f64,
+    /// LLM reasoning for this step (agentic loop only).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning: Option<String>,
 }
 
 /// Which recovery mechanism produced the retry intent.
@@ -101,6 +106,28 @@ pub struct AttemptSummary {
     pub recovery_source: Option<RecoverySource>,
 }
 
+/// Summary of a single step in the agentic reasoning loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepSummary {
+    /// 1-based step number.
+    pub step: u8,
+    /// What kind of action was executed.
+    pub action: ActionKind,
+    /// Tool name or shell command.
+    pub tool_name: String,
+    /// Arguments passed to the tool.
+    pub tool_args: serde_json::Value,
+    /// Whether this step succeeded.
+    pub success: bool,
+    /// Truncated output summary (max 2KB per step).
+    pub output_summary: String,
+    /// LLM reasoning for choosing this step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// Duration of this step in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// Response from device back to cloud after executing a command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse {
@@ -134,6 +161,9 @@ pub struct CommandResponse {
     /// None when the intent was pre-parsed by the cloud.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub engine: Option<String>,
+    /// Agentic loop step chain (present only for multi-step commands).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub steps: Option<Vec<StepSummary>>,
 }
 
 /// Lifecycle status of a command.
@@ -290,6 +320,7 @@ mod tests {
             error: Some("CAN bus interface not available".into()),
             attempts: None,
             engine: None,
+            steps: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("CAN bus interface not available"));
@@ -374,6 +405,7 @@ mod tests {
                 },
             ]),
             engine: Some("ollama".into()),
+            steps: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("attempts"));

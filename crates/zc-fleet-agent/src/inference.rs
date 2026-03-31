@@ -42,6 +42,14 @@ pub trait EdgeInferenceEngine: Send + Sync {
     ) -> Option<ParsedIntent> {
         None
     }
+
+    /// Given accumulated step context, decide the next action for the
+    /// agentic loop. Returns `None` if the engine can't plan further
+    /// (single-shot only).
+    #[allow(unused_variables)]
+    async fn plan_next_step(&self, context: &str) -> Option<ParsedIntent> {
+        None
+    }
 }
 
 /// System prompt teaching three action types: tool, shell, reply.
@@ -107,6 +115,17 @@ Examples:
 - "hello" → {"action": "reply", "message": "Hello! I'm the fleet agent for this device. How can I help?", "confidence": 1.0}
 - "what can you do?" → {"action": "reply", "message": "I can read vehicle diagnostics (DTCs, PIDs, VIN), analyze logs, run system commands, and monitor CAN bus traffic.", "confidence": 1.0}
 
+## Action 4: continue — Execute a step and keep going (multi-step diagnostics)
+Use this when the user's question requires multiple diagnostic steps. Execute one tool/shell, observe the result, then decide the next step.
+
+Response format: {"action": "continue", "tool_name": "...", "tool_args": {...}, "reasoning": "why this step", "confidence": 0.9}
+
+When you have enough information to answer, switch to "reply" with your final synthesis.
+
+Examples:
+- "Is the powertrain healthy?" → {"action": "continue", "tool_name": "read_dtcs", "tool_args": {}, "reasoning": "Check for active DTCs first", "confidence": 0.95}
+- "Diagnose this vehicle" → {"action": "continue", "tool_name": "read_dtcs", "tool_args": {}, "reasoning": "Start with DTCs for fault overview", "confidence": 0.95}
+
 ## Rules
 - Respond with ONLY a JSON object (no markdown, no explanation)
 - Be generous in interpretation — operators use casual language
@@ -116,6 +135,47 @@ Examples:
 - For system/OS queries (CPU, memory, disk, network, processes) → action: shell
 - For conversation/greetings → action: reply
 - When unsure, prefer "reply" with a helpful message over returning nothing"#;
+
+/// System prompt addition for multi-step agentic reasoning.
+pub(crate) const AGENTIC_SYSTEM_PROMPT: &str = r#"You are an AI agent running on an IoT edge device in a vehicle fleet. You are in the middle of a multi-step diagnostic analysis.
+
+## Available tools (use with "continue" action):
+1. read_dtcs — Read diagnostic trouble codes. Args: {}
+2. read_vin — Read VIN. Args: {}
+3. read_freeze — Read freeze frame. Args: {}
+4. read_pid — Read OBD-II sensor. Args: {"pid": "0x0C"} (RPM), {"pid": "0x05"} (coolant temp), {"pid": "0x0D"} (speed), etc.
+5. can_monitor — Monitor CAN bus. Args: {"duration_secs": 10}
+6. read_uds_dtcs — Read UDS DTCs. Args: {"ecu": "BCR"}
+7. read_uds_did — Read UDS DID. Args: {"ecu": "BCR"}
+8. uds_session_control — UDS session control. Args: {"ecu": "BCR", "session": "extended"}
+9. search_logs — Search logs. Args: {"path": "/var/log/syslog", "query": "error"}
+10. analyze_errors — Analyze errors. Args: {"path": "/var/log/syslog"}
+11. log_stats — Log statistics. Args: {"path": "/var/log/syslog"}
+12. tail_logs — Recent logs. Args: {"path": "/var/log/syslog", "lines": 50}
+13. query_journal — Journal query. Args: {"unit": "nginx.service", "lines": 50}
+
+## Action: continue — Execute another diagnostic step
+Use when the user's question requires more data. Execute one tool, observe the result, then decide next.
+Response: {"action": "continue", "tool_name": "...", "tool_args": {...}, "reasoning": "why this step", "confidence": 0.9}
+
+## Action: shell — Run a system command as the next step
+Use for system info: uptime, memory, disk, CPU, network, processes, kernel, temperature.
+IMPORTANT: Use simple single commands only. No pipes (|), semicolons (;), redirects (> <), or backticks.
+Response: {"action": "shell", "command": "<single command with flags>", "reasoning": "why this step", "confidence": 0.9}
+
+## Action: reply — Final answer
+Use ONLY when you have gathered enough information from previous steps to give a complete answer.
+Synthesize all step results into a clear, concrete answer with data from the steps.
+Response: {"action": "reply", "message": "<synthesis of all results>", "confidence": 1.0}
+
+## Critical rules
+- Respond with ONLY a JSON object
+- Do NOT repeat a tool call you already made with the same arguments
+- **If a tool fails, try a DIFFERENT approach** — use shell commands or different tools. Do NOT give up after one failure.
+- If vehicle diagnostic tools fail (CAN timeout), pivot to system-level tools (shell commands like uptime, free -h, df -h) or log tools
+- Only use "reply" when you have ACTUAL DATA to report. Never reply with "let me check..." or "I will try..." — instead, use "continue" or "shell" to actually do it.
+- Keep reasoning brief (1 sentence)
+- For system status queries: use shell commands (uptime, free -h, df -h, top -b -n 1, lscpu, etc.)"#;
 
 /// Known tool names for validation. Must match the tools in SYSTEM_PROMPT
 /// **and** the tools returned by `ToolRegistry::with_defaults()`.
@@ -272,6 +332,9 @@ struct RawIntent {
     /// Confidence score.
     #[serde(default)]
     confidence: f64,
+    /// LLM reasoning for this step (agentic loop only).
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 fn default_action() -> String {
@@ -366,6 +429,7 @@ impl OllamaClient {
         // Route based on action type
         match raw.action.as_str() {
             "tool" => self.validate_tool_intent(raw),
+            "continue" => self.validate_continue_intent(raw),
             "shell" => self.validate_shell_intent(raw),
             "reply" => self.validate_reply_intent(raw),
             other => {
@@ -417,6 +481,32 @@ impl OllamaClient {
             tool_name,
             tool_args,
             confidence: raw.confidence,
+
+            reasoning: None,
+        })
+    }
+
+    /// Validate a continue action (agentic loop step): same as tool but with
+    /// ActionKind::Continue and reasoning.
+    fn validate_continue_intent(&self, raw: RawIntent) -> Option<ParsedIntent> {
+        let tool_name = raw.tool_name?;
+        if !KNOWN_TOOLS.contains(&tool_name.as_str()) {
+            tracing::warn!(tool_name = %tool_name, "ollama returned unknown tool in continue");
+            return None;
+        }
+
+        if raw.confidence < MIN_CONFIDENCE {
+            return None;
+        }
+
+        let tool_args = ensure_log_tool_path(&tool_name, raw.tool_args);
+
+        Some(ParsedIntent {
+            action: ActionKind::Continue,
+            tool_name,
+            tool_args,
+            confidence: raw.confidence,
+            reasoning: raw.reasoning,
         })
     }
 
@@ -454,6 +544,8 @@ impl OllamaClient {
             tool_name: sanitized,
             tool_args: raw.tool_args,
             confidence: raw.confidence,
+
+            reasoning: None,
         })
     }
 
@@ -466,6 +558,8 @@ impl OllamaClient {
             tool_name: String::new(),
             tool_args: serde_json::json!({ "message": message }),
             confidence: 1.0,
+
+            reasoning: None,
         })
     }
 }
@@ -491,6 +585,10 @@ impl EdgeInferenceEngine for OllamaClient {
         timeout: Duration,
     ) -> Option<ParsedIntent> {
         crate::recovery::ollama_recovery(ctx, self, timeout).await
+    }
+
+    async fn plan_next_step(&self, context: &str) -> Option<ParsedIntent> {
+        self.parse_with_prompt(AGENTIC_SYSTEM_PROMPT, context).await
     }
 }
 
@@ -581,6 +679,8 @@ impl EdgeInferenceEngine for FallbackReplyEngine {
             tool_name: String::new(),
             tool_args: serde_json::json!({ "message": message }),
             confidence: 1.0,
+
+            reasoning: None,
         })
     }
 
@@ -983,6 +1083,8 @@ enabled = false
             command: None,
             message: Some("Hi there".into()),
             confidence: 0.5,
+
+            reasoning: None,
         };
         let client = OllamaClient::new(OllamaConfig::default());
         let intent = client.validate_reply_intent(raw).unwrap();

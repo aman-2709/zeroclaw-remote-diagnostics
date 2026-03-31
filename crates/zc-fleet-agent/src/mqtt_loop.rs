@@ -10,6 +10,7 @@ use zc_log_tools::LogSource;
 use zc_mqtt_channel::{Channel, IncomingMessage, MqttChannel, ShadowClient, classify};
 use zc_protocol::commands::{CommandResponse, CommandStatus};
 
+use crate::config::AgenticConfig;
 use crate::executor::CommandExecutor;
 use crate::inference::EdgeInferenceEngine;
 use crate::registry::ToolRegistry;
@@ -24,6 +25,7 @@ const MAX_MQTT_PAYLOAD: usize = 128 * 1024;
 ///
 /// Runs forever until the event loop returns an unrecoverable error or
 /// the task is cancelled. Intended to be spawned as a background tokio task.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     mut eventloop: EventLoop,
     channel: &MqttChannel,
@@ -32,8 +34,10 @@ pub async fn run(
     log_source: &dyn LogSource,
     engines: &[&dyn EdgeInferenceEngine],
     shadow_state: &SharedShadowState,
+    agentic: AgenticConfig,
 ) {
-    let executor = CommandExecutor::new(registry, can_interface, log_source, engines);
+    let executor =
+        CommandExecutor::with_agentic(registry, can_interface, log_source, engines, agentic);
     let shadow_client = ShadowClient::new(channel, channel.fleet_id(), channel.device_id());
 
     loop {
@@ -340,6 +344,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         }
     }
 

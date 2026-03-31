@@ -4,13 +4,14 @@ export type CommandStatus = 'pending' | 'sent' | 'received' | 'executing' | 'com
 
 export type InferenceTier = 'local' | 'cloud';
 
-export type ActionKind = 'tool' | 'shell' | 'reply';
+export type ActionKind = 'tool' | 'shell' | 'reply' | 'continue';
 
 export interface ParsedIntent {
 	action?: ActionKind;
 	tool_name: string;
 	tool_args: Record<string, unknown>;
 	confidence: number;
+	reasoning?: string | null;
 }
 
 export interface CommandEnvelope {
@@ -37,6 +38,17 @@ export interface AttemptSummary {
 	recovery_source: RecoverySource | null;
 }
 
+export interface StepSummary {
+	step: number;
+	action: ActionKind;
+	tool_name: string;
+	tool_args: Record<string, unknown>;
+	success: boolean;
+	output_summary: string;
+	reasoning?: string | null;
+	duration_ms: number;
+}
+
 export interface CommandResponse {
 	command_id: string;
 	device_id: string;
@@ -48,6 +60,7 @@ export interface CommandResponse {
 	timestamp: string;
 	attempts?: AttemptSummary[] | null;
 	engine?: string | null;
+	steps?: StepSummary[] | null;
 }
 
 export interface CommandRecord {

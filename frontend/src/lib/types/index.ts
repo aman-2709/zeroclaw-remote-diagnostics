@@ -1,6 +1,6 @@
 export * from './device';
 export * from './command';
-import type { AttemptSummary } from './command';
+import type { AttemptSummary, StepSummary } from './command';
 
 /** DTC severity levels matching zc-protocol DtcSeverity. */
 export type DtcSeverity = 'info' | 'warning' | 'critical' | 'unknown';
@@ -98,6 +98,7 @@ export type WsEvent =
 			responded_at: string;
 			attempts?: AttemptSummary[] | null;
 			engine?: string | null;
+			steps?: StepSummary[] | null;
 	  }
 	| {
 			type: 'device_heartbeat';

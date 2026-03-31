@@ -282,20 +282,67 @@ Chain: `[Ollama, Bedrock, Fallback]` — free/fast first, paid cloud second, key
 - [ ] Send device capabilities to cloud so first-attempt inference is more accurate
 - [ ] Track retry rate per tool for rule engine improvement
 
-## Phase 20: Clear DTCs Tool
+## Phase 20: Agentic Loop — Multi-Step Edge Reasoning
+Transform the executor from single-shot to an observe → decide → act loop where the LLM
+plans steps, observes results, and decides the next action (up to a configurable step limit).
+
+### Protocol & Config
+- [x] Add `Continue` variant to `ActionKind` enum (backward-compatible serde)
+- [x] Add `reasoning: Option<String>` to `ParsedIntent`
+- [x] Add `StepSummary` struct (step, action, tool_name, tool_args, success, output_summary, reasoning, duration_ms)
+- [x] Add `steps: Option<Vec<StepSummary>>` to `CommandResponse`
+- [x] Add `AgenticConfig` (enabled, max_steps, max_time_secs) to config.rs
+- [x] Add `[agentic]` section to `AgentConfig` with serde defaults
+
+### Inference Engine Trait
+- [x] Add `plan_next_step(&self, context: &str) -> Option<ParsedIntent>` to `EdgeInferenceEngine` (default: None)
+- [x] Add `AGENTIC_SYSTEM_PROMPT` constant with tool list and continue/reply instructions
+- [x] Add `continue` action to main `SYSTEM_PROMPT` (Action 4)
+- [x] Implement `plan_next_step` for `OllamaClient`
+- [x] Implement `plan_next_step` for `EdgeBedrockEngine`
+
+### Executor Agentic Loop
+- [x] Add `with_agentic()` constructor to `CommandExecutor`
+- [x] Route `Continue` + agentic enabled to `execute_agentic()`
+- [x] Agentic loop: budget checks (max steps, max time), duplicate detection, per-step recovery
+- [x] `force_summary_response()`: LLM synthesis or manual fallback when loop ends without Reply
+- [x] `format_step_context()` / `format_summary_prompt()` for LLM follow-up prompts
+
+### Cloud API Pass-through
+- [x] Add `steps` field to `WsEvent::CommandResponse` in events.rs
+- [x] Forward `steps` in mqtt_bridge.rs and routes/responses.rs
+
+### Frontend
+- [x] Add `StepSummary` interface and `'continue'` to `ActionKind` in command.ts
+- [x] Add `steps` to WsEvent command_response variant
+- [x] Render step chain in CommandForm: numbered steps, reasoning, tool name, output, timing, success/fail
+
+### Wiring
+- [x] Wire `AgenticConfig` into `mqtt_loop::run()` and `CommandExecutor::with_agentic()`
+- [x] Pass `config.agentic` from `main.rs` to mqtt_loop
+- [x] Add `[agentic]` section to `dev/agent.toml`
+
+### Tests
+- [x] Config: agentic defaults, custom agentic config deserialization
+- [x] Agentic loop: single-step (Continue → Reply), three-step chain, max-steps forced summary
+- [x] Agentic loop: duplicate detection stops loop, disabled falls through to single-shot
+- [x] Agentic loop: engine returns None ends loop, step durations recorded, shell step, force summary fallback
+- [x] 656 workspace tests passing (up from 645), clippy clean, fmt clean, svelte-check clean, pnpm build clean
+
+## Phase 21: Clear DTCs Tool
 - [ ] Safety review: require confirmation parameter (`"confirm": true`)
 - [ ] OBD-II Mode 0x04 — `clear_dtcs` tool
 - [ ] UDS Service 0x14 — `clear_uds_dtcs` tool (selective clearing by group)
 - [ ] Add 0x04/0x14 to safety allowlist (with confirmation gate)
 - [ ] Rule engine + Bedrock patterns for clear commands
 
-## Phase 21: Expanded PID Coverage (8 → 200+)
+## Phase 22: Expanded PID Coverage (8 → 200+)
 - [ ] Create `pid_database.rs` — static PID catalog with formulas and units
 - [ ] PID formula engine (runtime evaluation of `(256*A + B) / 4` expressions)
 - [ ] Update `read_pid` to accept any supported PID
 - [ ] Unit conversion (metric/imperial)
 
-## Phase 22: VIN Decoder (NHTSA VPIC, public domain)
+## Phase 23: VIN Decoder (NHTSA VPIC, public domain)
 - [ ] Offline VPIC SQLite database
 - [ ] WMI lookup, SAE J287 checksum, pattern matching
 - [ ] Update `read_vin` tool with decoded make/model/year/engine

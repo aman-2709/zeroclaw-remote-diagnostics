@@ -75,16 +75,45 @@ const ALLOWED_COMMANDS: &[&str] = &[
 /// Binaries that are blocked for general execution but allowed with `--version` / `-V` / `-version`.
 /// Enables "what version of X is installed?" diagnostics without arbitrary code execution.
 const VERSION_ONLY_COMMANDS: &[&str] = &[
-    "python", "python3", "curl", "openssl", "node", "bash", "sh", "perl", "ruby", "ssh", "gcc",
-    "g++", "java", "javac", "go", "rustc", "cargo", "docker", "git", "make", "cmake", "nginx",
-    "php", "dotnet", "kubectl", "terraform", "ansible", "pip", "pip3", "npm", "yarn", "pnpm",
+    "python",
+    "python3",
+    "curl",
+    "openssl",
+    "node",
+    "bash",
+    "sh",
+    "perl",
+    "ruby",
+    "ssh",
+    "gcc",
+    "g++",
+    "java",
+    "javac",
+    "go",
+    "rustc",
+    "cargo",
+    "docker",
+    "git",
+    "make",
+    "cmake",
+    "nginx",
+    "php",
+    "dotnet",
+    "kubectl",
+    "terraform",
+    "ansible",
+    "pip",
+    "pip3",
+    "npm",
+    "yarn",
+    "pnpm",
 ];
 
 /// Commands explicitly blocked (dangerous even if somehow reached).
 const BLOCKED_COMMANDS: &[&str] = &[
-    "rm", "dd", "sudo", "su", "kill", "killall", "pkill", "chmod", "chown", "chgrp", "wget",
-    "zsh", "nc", "ncat", "socat", "telnet", "scp", "rsync", "mount", "umount", "mkfs", "fdisk",
-    "parted", "iptables", "nft", "reboot", "shutdown", "poweroff", "halt", "init",
+    "rm", "dd", "sudo", "su", "kill", "killall", "pkill", "chmod", "chown", "chgrp", "wget", "zsh",
+    "nc", "ncat", "socat", "telnet", "scp", "rsync", "mount", "umount", "mkfs", "fdisk", "parted",
+    "iptables", "nft", "reboot", "shutdown", "poweroff", "halt", "init",
 ];
 
 /// Shell metacharacters that indicate injection attempts.
@@ -203,8 +232,19 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
 
     // Restrict dpkg to read-only operations
     if program == "dpkg" {
-        const ALLOWED_DPKG: &[&str] = &["-l", "--list", "-L", "--listfiles", "-s", "--status",
-            "-S", "--search", "-p", "--print-avail", "--get-selections"];
+        const ALLOWED_DPKG: &[&str] = &[
+            "-l",
+            "--list",
+            "-L",
+            "--listfiles",
+            "-s",
+            "--status",
+            "-S",
+            "--search",
+            "-p",
+            "--print-avail",
+            "--get-selections",
+        ];
         match args.first() {
             Some(flag) if ALLOWED_DPKG.contains(&flag.as_str()) => {}
             Some(flag) => {
@@ -218,8 +258,9 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
 
     // Restrict apt to read-only operations
     if program == "apt" {
-        const ALLOWED_APT: &[&str] = &["list", "show", "search", "depends", "rdepends", "policy",
-            "madison"];
+        const ALLOWED_APT: &[&str] = &[
+            "list", "show", "search", "depends", "rdepends", "policy", "madison",
+        ];
         match args.first() {
             Some(sub) if ALLOWED_APT.contains(&sub.as_str()) => {}
             Some(sub) => {
@@ -233,8 +274,7 @@ pub async fn execute(command_str: &str) -> Result<ShellResult, ShellError> {
 
     // Restrict rpm to read-only operations
     if program == "rpm" {
-        const ALLOWED_RPM: &[&str] = &["-q", "-qa", "-qi", "-ql", "-qf", "--query",
-            "--querytags"];
+        const ALLOWED_RPM: &[&str] = &["-q", "-qa", "-qi", "-ql", "-qf", "--query", "--querytags"];
         match args.first() {
             Some(flag) if ALLOWED_RPM.contains(&flag.as_str()) => {}
             Some(flag) => {
@@ -375,7 +415,10 @@ mod tests {
     #[tokio::test]
     async fn bash_version_allowed() {
         let result = execute("bash --version").await;
-        assert!(result.is_ok(), "bash --version should be allowed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "bash --version should be allowed: {result:?}"
+        );
         assert!(!result.unwrap().stdout.is_empty());
     }
 

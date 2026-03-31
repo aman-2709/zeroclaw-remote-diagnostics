@@ -143,6 +143,7 @@ async fn handle_command_response(payload: &[u8], state: &AppState) {
         responded_at: Utc::now(),
         attempts: resp.attempts,
         engine: resp.engine,
+        steps: resp.steps,
     });
 }
 
@@ -534,6 +535,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         };
 
         let payload = serde_json::to_vec(&resp).unwrap();

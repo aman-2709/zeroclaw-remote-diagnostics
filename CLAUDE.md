@@ -4,7 +4,7 @@
 
 Intelligent command-and-control platform for IoT device fleets (primarily connected vehicles). Combines edge-side AI inference with cloud fallback for remote diagnostics, log analysis, and natural-language device interaction.
 
-**Status**: Phase 19c complete — Bedrock edge inference engine (feature-gated cloud LLM fallback)
+**Status**: Phase 20 complete — Agentic loop (multi-step edge reasoning with observe → decide → act)
 
 ## Task Tracking
 

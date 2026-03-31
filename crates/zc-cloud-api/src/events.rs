@@ -33,6 +33,9 @@ pub enum WsEvent {
         /// Name of the inference engine that parsed the command (e.g. "ollama", "bedrock", "fallback").
         #[serde(skip_serializing_if = "Option::is_none")]
         engine: Option<String>,
+        /// Agentic loop step chain (present only for multi-step commands).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        steps: Option<Vec<zc_protocol::commands::StepSummary>>,
     },
 
     /// A device heartbeat was received.
@@ -116,6 +119,7 @@ mod tests {
             responded_at: Utc::now(),
             attempts: None,
             engine: None,
+            steps: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""type":"command_response""#));

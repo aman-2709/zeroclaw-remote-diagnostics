@@ -16,9 +16,10 @@ use zc_canbus_tools::CanInterface;
 use zc_log_tools::LogSource;
 use zc_protocol::commands::{
     ActionKind, AttemptSummary, CommandEnvelope, CommandResponse, CommandStatus, InferenceTier,
-    ParsedIntent, RecoverySource,
+    ParsedIntent, RecoverySource, StepSummary,
 };
 
+use crate::config::AgenticConfig;
 use crate::inference::{EdgeInferenceEngine, sanitize_shell_command};
 use crate::recovery::{self, RecoveryContext};
 use crate::registry::{ToolKind, ToolRegistry};
@@ -29,11 +30,15 @@ use crate::shell;
 /// Generic over CAN interface and log source for testability.
 /// Inference is handled by a chain of `EdgeInferenceEngine` implementations;
 /// the first engine to return `Some` wins.
+/// Maximum per-step output summary length (bytes).
+const MAX_STEP_OUTPUT: usize = 2048;
+
 pub struct CommandExecutor<'a> {
     registry: &'a ToolRegistry,
     can_interface: &'a dyn CanInterface,
     log_source: &'a dyn LogSource,
     engines: &'a [&'a dyn EdgeInferenceEngine],
+    agentic: AgenticConfig,
 }
 
 impl<'a> CommandExecutor<'a> {
@@ -48,6 +53,24 @@ impl<'a> CommandExecutor<'a> {
             can_interface,
             log_source,
             engines,
+            agentic: AgenticConfig::default(),
+        }
+    }
+
+    /// Create an executor with agentic loop configuration.
+    pub fn with_agentic(
+        registry: &'a ToolRegistry,
+        can_interface: &'a dyn CanInterface,
+        log_source: &'a dyn LogSource,
+        engines: &'a [&'a dyn EdgeInferenceEngine],
+        agentic: AgenticConfig,
+    ) -> Self {
+        Self {
+            registry,
+            can_interface,
+            log_source,
+            engines,
+            agentic,
         }
     }
 
@@ -108,6 +131,13 @@ impl<'a> CommandExecutor<'a> {
                 }
             }
         };
+
+        // ── Agentic loop ────────────────────────────────────────
+        if intent.action == ActionKind::Continue && self.agentic.enabled {
+            return self
+                .execute_agentic(envelope, intent, tier, engine_name, start)
+                .await;
+        }
 
         // ── Attempt 1 ───────────────────────────────────────────
         let attempt1_start = Instant::now();
@@ -225,7 +255,9 @@ impl<'a> CommandExecutor<'a> {
         start: Instant,
     ) -> CommandResponse {
         match intent.action {
-            ActionKind::Tool => self.execute_tool(envelope, intent, tier, start).await,
+            ActionKind::Tool | ActionKind::Continue => {
+                self.execute_tool(envelope, intent, tier, start).await
+            }
             ActionKind::Shell => self.execute_shell(envelope, intent, tier, start).await,
             ActionKind::Reply => self.execute_reply(envelope, intent, tier, start),
         }
@@ -254,6 +286,351 @@ impl<'a> CommandExecutor<'a> {
     ) -> CommandResponse {
         resp.engine = engine_name;
         resp
+    }
+
+    /// Execute a multi-step agentic loop.
+    ///
+    /// The LLM returns `Continue` actions, each executing a tool/shell and
+    /// feeding the result back. The loop terminates when the LLM returns
+    /// `Reply`, budget is exhausted, or a duplicate tool call is detected.
+    async fn execute_agentic(
+        &self,
+        envelope: &CommandEnvelope,
+        initial_intent: ParsedIntent,
+        tier: InferenceTier,
+        engine_name: Option<String>,
+        start: Instant,
+    ) -> CommandResponse {
+        let max_steps = self.agentic.max_steps;
+        let max_time = Duration::from_secs(self.agentic.max_time_secs as u64);
+        let mut steps: Vec<StepSummary> = Vec::new();
+        let mut current_intent = initial_intent;
+
+        loop {
+            let step_num = (steps.len() + 1) as u8;
+
+            // Budget check: max steps
+            if step_num > max_steps {
+                tracing::info!(
+                    max_steps,
+                    "agentic loop: max steps reached, forcing summary"
+                );
+                break;
+            }
+
+            // Budget check: max time
+            if start.elapsed() >= max_time {
+                tracing::info!(?max_time, "agentic loop: timeout reached, forcing summary");
+                break;
+            }
+
+            // Duplicate detection: same tool+args as a previous step
+            if self.is_duplicate_step(&current_intent, &steps) {
+                tracing::info!(
+                    tool = %current_intent.tool_name,
+                    "agentic loop: duplicate tool call detected, forcing summary"
+                );
+                break;
+            }
+
+            // Execute the current step (tool or shell)
+            let step_start = Instant::now();
+            let step_action = match current_intent.action {
+                ActionKind::Reply => {
+                    // LLM decided to reply — we're done
+                    let mut response = self.execute_reply(envelope, &current_intent, tier, start);
+                    response.engine = engine_name;
+                    if !steps.is_empty() {
+                        response.steps = Some(steps);
+                    }
+                    return response;
+                }
+                ActionKind::Shell => ActionKind::Shell,
+                ActionKind::Continue | ActionKind::Tool => {
+                    // Continue with a known tool → Tool; unknown name → treat as Shell
+                    if self.registry.lookup(&current_intent.tool_name).is_some() {
+                        ActionKind::Tool
+                    } else {
+                        ActionKind::Shell
+                    }
+                }
+            };
+
+            let step_intent = ParsedIntent {
+                action: step_action,
+                tool_name: current_intent.tool_name.clone(),
+                tool_args: current_intent.tool_args.clone(),
+                confidence: current_intent.confidence,
+                reasoning: current_intent.reasoning.clone(),
+            };
+
+            let response = self
+                .execute_action(envelope, &step_intent, tier, start)
+                .await;
+            let step_ms = step_start.elapsed().as_millis() as u64;
+
+            let success = response.status != CommandStatus::Failed;
+            let output_summary = self.extract_step_output(&response);
+
+            steps.push(StepSummary {
+                step: step_num,
+                action: step_action,
+                tool_name: current_intent.tool_name.clone(),
+                tool_args: current_intent.tool_args.clone(),
+                success,
+                output_summary: output_summary.clone(),
+                reasoning: current_intent.reasoning.clone(),
+                duration_ms: step_ms,
+            });
+
+            tracing::info!(
+                step = step_num,
+                tool = %current_intent.tool_name,
+                success,
+                duration_ms = step_ms,
+                "agentic loop: step completed"
+            );
+
+            // If step failed, try per-step recovery before asking LLM
+            let step_output = if !success {
+                let error_msg = response.error.as_deref().unwrap_or("unknown error");
+                if recovery::is_recoverable(error_msg) {
+                    let ctx = RecoveryContext {
+                        original_query: envelope.natural_language.clone(),
+                        failed_action: step_action,
+                        failed_tool: current_intent.tool_name.clone(),
+                        failed_args: current_intent.tool_args.clone(),
+                        error_message: error_msg.to_string(),
+                        available_tools: self.registry.tool_names(),
+                        elapsed_ms: step_ms,
+                    };
+                    if let Some(ri) = recovery::rule_based_recovery(&ctx) {
+                        tracing::info!(
+                            from = %current_intent.tool_name,
+                            to = %ri.tool_name,
+                            "agentic loop: per-step rule recovery"
+                        );
+                        let recovery_start = Instant::now();
+                        let recovery_resp = self.execute_action(envelope, &ri, tier, start).await;
+                        let recovery_ms = recovery_start.elapsed().as_millis() as u64;
+                        let recovery_success = recovery_resp.status != CommandStatus::Failed;
+                        let recovery_output = self.extract_step_output(&recovery_resp);
+
+                        steps.push(StepSummary {
+                            step: (steps.len() + 1) as u8,
+                            action: ri.action,
+                            tool_name: ri.tool_name.clone(),
+                            tool_args: ri.tool_args.clone(),
+                            success: recovery_success,
+                            output_summary: recovery_output.clone(),
+                            reasoning: Some(format!(
+                                "Recovery from failed {}: {}",
+                                current_intent.tool_name, error_msg
+                            )),
+                            duration_ms: recovery_ms,
+                        });
+                        recovery_output
+                    } else {
+                        format!("Error: {error_msg}")
+                    }
+                } else {
+                    format!("Error: {error_msg}")
+                }
+            } else {
+                output_summary
+            };
+
+            // Ask LLM for next step
+            let context =
+                self.format_step_context(&envelope.natural_language, &steps, &step_output);
+
+            let mut next_intent = None;
+            for engine in self.engines {
+                if let Some(intent) = engine.plan_next_step(&context).await {
+                    next_intent = Some(intent);
+                    break;
+                }
+            }
+
+            match next_intent {
+                Some(intent) => {
+                    current_intent = intent;
+                }
+                None => {
+                    tracing::info!("agentic loop: no engine could plan next step, ending loop");
+                    break;
+                }
+            }
+        }
+
+        // Loop ended without a Reply — force a summary
+        self.force_summary_response(envelope, &steps, tier, engine_name, start)
+            .await
+    }
+
+    /// Check if the proposed intent duplicates a previous step (same tool + args).
+    fn is_duplicate_step(&self, intent: &ParsedIntent, steps: &[StepSummary]) -> bool {
+        steps
+            .iter()
+            .any(|s| s.tool_name == intent.tool_name && s.tool_args == intent.tool_args)
+    }
+
+    /// Extract a truncated output summary from a CommandResponse for step context.
+    fn extract_step_output(&self, response: &CommandResponse) -> String {
+        let text = response
+            .response_text
+            .as_deref()
+            .or(response.error.as_deref())
+            .or(response.response_data.as_ref().map(|_| "(structured data)"))
+            .unwrap_or("(no output)");
+
+        if text.len() > MAX_STEP_OUTPUT {
+            format!("{}...(truncated)", &text[..MAX_STEP_OUTPUT])
+        } else {
+            text.to_string()
+        }
+    }
+
+    /// Format accumulated step context for the LLM's next-step prompt.
+    fn format_step_context(
+        &self,
+        original_query: &str,
+        steps: &[StepSummary],
+        latest_output: &str,
+    ) -> String {
+        let mut ctx = format!("User query: \"{}\"\n\nCompleted steps:\n", original_query);
+        for step in steps {
+            ctx.push_str(&format!(
+                "Step {}: {} {} ({})\n  Result: {}\n",
+                step.step,
+                if step.action == ActionKind::Shell {
+                    "shell"
+                } else {
+                    "tool"
+                },
+                step.tool_name,
+                if step.success { "OK" } else { "FAILED" },
+                if step.output_summary.len() > 500 {
+                    format!("{}...", &step.output_summary[..500])
+                } else {
+                    step.output_summary.clone()
+                },
+            ));
+        }
+        ctx.push_str(&format!(
+            "\nLatest output:\n{}\n\n\
+             Based on the user's question and results so far, what should you do next?\n\
+             - If you need to run a diagnostic tool, respond with {{\"action\": \"continue\", \"tool_name\": \"<tool>\", \"tool_args\": {{...}}, \"reasoning\": \"why\", \"confidence\": 0.9}}\n\
+             - If you need system info, respond with {{\"action\": \"shell\", \"command\": \"<command>\", \"reasoning\": \"why\", \"confidence\": 0.9}}\n\
+             - If you have enough ACTUAL DATA from previous steps to fully answer, respond with {{\"action\": \"reply\", \"message\": \"<synthesis>\", \"confidence\": 1.0}}\n\
+             IMPORTANT: If previous tools failed, try a different approach (shell commands, different tools). Do NOT give up.",
+            latest_output
+        ));
+        ctx
+    }
+
+    /// When the agentic loop ends without a Reply, synthesize a response
+    /// from accumulated step results.
+    async fn force_summary_response(
+        &self,
+        envelope: &CommandEnvelope,
+        steps: &[StepSummary],
+        tier: InferenceTier,
+        engine_name: Option<String>,
+        start: Instant,
+    ) -> CommandResponse {
+        // Try to ask an LLM engine to synthesize
+        let context = self.format_summary_prompt(&envelope.natural_language, steps);
+        for engine in self.engines {
+            if let Some(intent) = engine.plan_next_step(&context).await
+                && intent.action == ActionKind::Reply
+            {
+                let message = intent
+                    .tool_args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Completed multi-step analysis.")
+                    .to_string();
+                return CommandResponse {
+                    command_id: envelope.id,
+                    correlation_id: envelope.correlation_id,
+                    device_id: envelope.device_id.clone(),
+                    status: CommandStatus::Completed,
+                    inference_tier: tier,
+                    response_text: Some(message),
+                    response_data: None,
+                    latency_ms: start.elapsed().as_millis() as u64,
+                    responded_at: Utc::now(),
+                    error: None,
+                    attempts: None,
+                    engine: engine_name,
+                    steps: Some(steps.to_vec()),
+                };
+            }
+        }
+
+        // Fallback: summarize step outputs ourselves
+        let mut summary = String::from("Multi-step analysis results:\n");
+        for step in steps {
+            if step.success {
+                summary.push_str(&format!(
+                    "- {} {}: {}\n",
+                    step.tool_name,
+                    if let Some(ref r) = step.reasoning {
+                        format!("({})", r)
+                    } else {
+                        String::new()
+                    },
+                    if step.output_summary.len() > 200 {
+                        format!("{}...", &step.output_summary[..200])
+                    } else {
+                        step.output_summary.clone()
+                    }
+                ));
+            }
+        }
+
+        CommandResponse {
+            command_id: envelope.id,
+            correlation_id: envelope.correlation_id,
+            device_id: envelope.device_id.clone(),
+            status: CommandStatus::Completed,
+            inference_tier: tier,
+            response_text: Some(summary),
+            response_data: None,
+            latency_ms: start.elapsed().as_millis() as u64,
+            responded_at: Utc::now(),
+            error: None,
+            attempts: None,
+            engine: engine_name,
+            steps: Some(steps.to_vec()),
+        }
+    }
+
+    /// Format a prompt asking the LLM to summarize accumulated step results.
+    fn format_summary_prompt(&self, original_query: &str, steps: &[StepSummary]) -> String {
+        let mut ctx = format!(
+            "User query: \"{}\"\n\nYou ran these diagnostic steps:\n",
+            original_query
+        );
+        for step in steps {
+            ctx.push_str(&format!(
+                "Step {}: {} → {}: {}\n",
+                step.step,
+                step.tool_name,
+                if step.success { "OK" } else { "FAILED" },
+                if step.output_summary.len() > 500 {
+                    format!("{}...", &step.output_summary[..500])
+                } else {
+                    step.output_summary.clone()
+                },
+            ));
+        }
+        ctx.push_str(
+            "\nSynthesize all results into a clear, concise answer to the user's question.\n\
+             Respond with: {\"action\": \"reply\", \"message\": \"<your synthesis>\", \"confidence\": 1.0}",
+        );
+        ctx
     }
 
     /// Execute a tool action via the ToolRegistry.
@@ -309,6 +686,7 @@ impl<'a> CommandExecutor<'a> {
                         error: None,
                         attempts: None,
                         engine: None,
+                        steps: None,
                     }
                 } else {
                     let error_msg = data["error"]
@@ -328,6 +706,7 @@ impl<'a> CommandExecutor<'a> {
                         error: Some(error_msg),
                         attempts: None,
                         engine: None,
+                        steps: None,
                     }
                 }
             }
@@ -344,6 +723,7 @@ impl<'a> CommandExecutor<'a> {
                 error: Some(err),
                 attempts: None,
                 engine: None,
+                steps: None,
             },
         }
     }
@@ -377,6 +757,7 @@ impl<'a> CommandExecutor<'a> {
                 error: Some("shell: command was empty after sanitization".into()),
                 attempts: None,
                 engine: None,
+                steps: None,
             };
         }
         if command_str != intent.tool_name {
@@ -419,6 +800,7 @@ impl<'a> CommandExecutor<'a> {
                     error: None,
                     attempts: None,
                     engine: None,
+                    steps: None,
                 }
             }
             Err(e) => {
@@ -436,6 +818,7 @@ impl<'a> CommandExecutor<'a> {
                     error: Some(format!("shell: {e}")),
                     attempts: None,
                     engine: None,
+                    steps: None,
                 }
             }
         }
@@ -469,6 +852,7 @@ impl<'a> CommandExecutor<'a> {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         }
     }
 
@@ -491,6 +875,7 @@ impl<'a> CommandExecutor<'a> {
             error: Some(message.to_string()),
             attempts: None,
             engine: None,
+            steps: None,
         }
     }
 }
@@ -549,6 +934,8 @@ mod tests {
             tool_name: "nonexistent_tool".into(),
             tool_args: json!({}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -569,6 +956,8 @@ mod tests {
             tool_name: "log_stats".into(),
             tool_args: json!({"path": "/var/log/syslog"}),
             confidence: 0.95,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -591,6 +980,8 @@ mod tests {
             tool_name: "search_logs".into(),
             tool_args: json!({"path": "/var/log/syslog", "query": "error"}),
             confidence: 0.88,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -614,6 +1005,8 @@ mod tests {
             tool_name: "hostname".into(),
             tool_args: json!({}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -635,6 +1028,8 @@ mod tests {
             tool_name: "rm -rf /".into(),
             tool_args: json!({}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -656,6 +1051,8 @@ mod tests {
             tool_name: "ip -details link show type can".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -682,6 +1079,8 @@ mod tests {
             tool_name: String::new(),
             tool_args: json!({"message": "I'm operational and monitoring the fleet."}),
             confidence: 1.0,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -706,6 +1105,8 @@ mod tests {
             tool_name: String::new(),
             tool_args: json!({}),
             confidence: 1.0,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -852,6 +1253,8 @@ mod tests {
             tool_name: "search_logs".into(),
             tool_args: json!({"path": "/var/log/nonexistent", "query": "error"}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -883,6 +1286,8 @@ mod tests {
             tool_name: "read_dtcs".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -910,6 +1315,8 @@ mod tests {
             tool_name: "rm -rf /".into(),
             tool_args: json!({}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -954,6 +1361,8 @@ mod tests {
             tool_name: "read_pid".into(),
             tool_args: json!({"pid": "0x0C"}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -1000,6 +1409,8 @@ mod tests {
             tool_name: "read_pid".into(),
             tool_args: json!({"pid": "0x0C"}),
             confidence: 0.9,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -1025,6 +1436,8 @@ mod tests {
             tool_name: "log_stats".into(),
             tool_args: json!({"path": "/var/log/syslog"}),
             confidence: 0.95,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -1049,6 +1462,8 @@ mod tests {
             tool_name: "read_vin".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
         let resp = executor.execute(&cmd).await;
 
@@ -1094,6 +1509,501 @@ mod tests {
 
         assert_eq!(resp.status, CommandStatus::Failed);
         assert!(resp.error.unwrap().contains("no inference engine"));
+    }
+
+    // ── Agentic loop tests ───────────────────────────────────────
+
+    /// A mock inference engine that returns a scripted sequence of intents.
+    /// Used to test the agentic loop without real LLM calls.
+    struct ScriptedEngine {
+        /// Initial parse response (for the first `parse()` call).
+        initial: Option<ParsedIntent>,
+        /// Sequence of next-step responses (consumed in order).
+        next_steps: std::sync::Mutex<Vec<Option<ParsedIntent>>>,
+    }
+
+    impl ScriptedEngine {
+        fn new(initial: Option<ParsedIntent>, next_steps: Vec<Option<ParsedIntent>>) -> Self {
+            Self {
+                initial,
+                next_steps: std::sync::Mutex::new(next_steps),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EdgeInferenceEngine for ScriptedEngine {
+        fn engine_name(&self) -> &str {
+            "scripted"
+        }
+
+        fn recovery_source(&self) -> RecoverySource {
+            RecoverySource::Ollama
+        }
+
+        async fn parse(&self, _text: &str) -> Option<ParsedIntent> {
+            self.initial.clone()
+        }
+
+        async fn plan_next_step(&self, _context: &str) -> Option<ParsedIntent> {
+            let mut steps = self.next_steps.lock().unwrap();
+            if steps.is_empty() {
+                None
+            } else {
+                steps.remove(0)
+            }
+        }
+    }
+
+    fn agentic_config(enabled: bool, max_steps: u8, max_time_secs: u16) -> AgenticConfig {
+        AgenticConfig {
+            enabled,
+            max_steps,
+            max_time_secs,
+        }
+    }
+
+    /// Single-step agentic loop: Continue → Reply on next step.
+    #[tokio::test]
+    async fn agentic_single_step_continue_then_reply() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.95,
+                reasoning: Some("Check log statistics first".into()),
+            }),
+            vec![
+                // After step 1, LLM decides to reply
+                Some(ParsedIntent {
+                    action: ActionKind::Reply,
+                    tool_name: String::new(),
+                    tool_args: json!({"message": "Logs look healthy: 100 lines, no errors."}),
+                    confidence: 1.0,
+                    reasoning: None,
+                }),
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "are logs healthy?", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        assert_eq!(
+            resp.response_text.as_deref(),
+            Some("Logs look healthy: 100 lines, no errors.")
+        );
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].tool_name, "log_stats");
+        assert!(steps[0].success);
+        assert_eq!(
+            steps[0].reasoning.as_deref(),
+            Some("Check log statistics first")
+        );
+    }
+
+    /// Three-step agentic loop: Continue → Continue → Reply.
+    #[tokio::test]
+    async fn agentic_three_step_chain() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.95,
+                reasoning: Some("Step 1: check log stats".into()),
+            }),
+            vec![
+                // Step 2: search for errors
+                Some(ParsedIntent {
+                    action: ActionKind::Continue,
+                    tool_name: "search_logs".into(),
+                    tool_args: json!({"path": "/var/log/syslog", "query": "error"}),
+                    confidence: 0.9,
+                    reasoning: Some("Step 2: search for errors".into()),
+                }),
+                // Step 3: tail recent logs
+                Some(ParsedIntent {
+                    action: ActionKind::Continue,
+                    tool_name: "tail_logs".into(),
+                    tool_args: json!({"path": "/var/log/syslog", "lines": 10}),
+                    confidence: 0.9,
+                    reasoning: Some("Step 3: check recent entries".into()),
+                }),
+                // Final: reply with synthesis
+                Some(ParsedIntent {
+                    action: ActionKind::Reply,
+                    tool_name: String::new(),
+                    tool_args: json!({"message": "Analysis complete: logs are healthy with no errors."}),
+                    confidence: 1.0,
+                    reasoning: None,
+                }),
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd =
+            CommandEnvelope::new("fleet-alpha", "rpi-001", "analyze the system logs", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        assert!(resp.response_text.unwrap().contains("Analysis complete"));
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].tool_name, "log_stats");
+        assert_eq!(steps[1].tool_name, "search_logs");
+        assert_eq!(steps[2].tool_name, "tail_logs");
+        for step in &steps {
+            assert!(step.success);
+            assert!(step.duration_ms < 5000);
+        }
+    }
+
+    /// Max steps reached: loop stops and forces a summary.
+    #[tokio::test]
+    async fn agentic_max_steps_forces_summary() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        // Engine returns Continue indefinitely but max_steps=2
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: Some("Step 1".into()),
+            }),
+            vec![
+                Some(ParsedIntent {
+                    action: ActionKind::Continue,
+                    tool_name: "search_logs".into(),
+                    tool_args: json!({"path": "/var/log/syslog", "query": "warn"}),
+                    confidence: 0.9,
+                    reasoning: Some("Step 2".into()),
+                }),
+                // This would be step 3 but max_steps=2, so it won't be reached.
+                // The force_summary_response will call plan_next_step asking for a Reply.
+                Some(ParsedIntent {
+                    action: ActionKind::Reply,
+                    tool_name: String::new(),
+                    tool_args: json!({"message": "Forced summary: 2 steps completed."}),
+                    confidence: 1.0,
+                    reasoning: None,
+                }),
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 2, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "full analysis", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 2, "should stop at max_steps=2");
+    }
+
+    /// Duplicate tool call detected: loop stops early.
+    #[tokio::test]
+    async fn agentic_duplicate_detection_stops_loop() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: Some("Check stats".into()),
+            }),
+            vec![
+                // Next step: same tool+args as step 1 → duplicate detected
+                Some(ParsedIntent {
+                    action: ActionKind::Continue,
+                    tool_name: "log_stats".into(),
+                    tool_args: json!({"path": "/var/log/syslog"}),
+                    confidence: 0.9,
+                    reasoning: Some("Check stats again".into()),
+                }),
+                // Force summary reply
+                Some(ParsedIntent {
+                    action: ActionKind::Reply,
+                    tool_name: String::new(),
+                    tool_args: json!({"message": "Duplicate detected, summarizing."}),
+                    confidence: 1.0,
+                    reasoning: None,
+                }),
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "check logs", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 1, "duplicate should stop after first step");
+    }
+
+    /// Agentic loop disabled: Continue action falls through to single-shot.
+    #[tokio::test]
+    async fn agentic_disabled_continue_falls_through() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: None,
+            }),
+            vec![],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        // Agentic disabled — Continue maps to Tool in execute_action
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(false, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "check logs", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        // Should execute as single-shot tool call (no steps)
+        assert_eq!(resp.status, CommandStatus::Completed);
+        assert!(
+            resp.steps.is_none(),
+            "disabled agentic should not produce steps"
+        );
+    }
+
+    /// Engine returns None for next step → loop ends with forced summary.
+    #[tokio::test]
+    async fn agentic_engine_returns_none_ends_loop() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: Some("Check stats".into()),
+            }),
+            vec![
+                // Engine can't plan next step
+                None,
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "check logs", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 1);
+        // Forced summary should produce response text
+        assert!(resp.response_text.is_some());
+    }
+
+    /// Agentic step durations are recorded on each StepSummary.
+    #[tokio::test]
+    async fn agentic_step_durations_recorded() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: None,
+            }),
+            vec![Some(ParsedIntent {
+                action: ActionKind::Reply,
+                tool_name: String::new(),
+                tool_args: json!({"message": "Done."}),
+                confidence: 1.0,
+                reasoning: None,
+            })],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "check logs", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        let steps = resp.steps.expect("should have steps");
+        for step in &steps {
+            assert!(
+                step.duration_ms < 5000,
+                "step duration should be reasonable"
+            );
+        }
+        assert!(resp.latency_ms < 5000, "total latency should be reasonable");
+    }
+
+    /// Agentic loop with shell action in a step.
+    #[tokio::test]
+    async fn agentic_shell_step() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "hostname".into(),
+                tool_args: json!({}),
+                confidence: 0.9,
+                reasoning: Some("Check hostname".into()),
+            }),
+            vec![Some(ParsedIntent {
+                action: ActionKind::Reply,
+                tool_name: String::new(),
+                tool_args: json!({"message": "Host identified."}),
+                confidence: 1.0,
+                reasoning: None,
+            })],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "identify this device", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        assert_eq!(resp.response_text.as_deref(), Some("Host identified."));
+        // The Continue action with a non-tool name maps to Tool (which fails as unknown tool),
+        // so the step is recorded even though it may fail
+        let steps = resp.steps.expect("should have steps");
+        assert_eq!(steps.len(), 1);
+    }
+
+    /// Force summary when no LLM can synthesize: produces a manual summary.
+    #[tokio::test]
+    async fn agentic_force_summary_fallback() {
+        let registry = ToolRegistry::with_defaults();
+        let can = MockCanInterface::new();
+        let logs = MockLogSource::with_syslog_sample();
+
+        // Engine returns Continue for initial parse but returns None for all
+        // subsequent plan_next_step calls (including summary prompt).
+        let engine = ScriptedEngine::new(
+            Some(ParsedIntent {
+                action: ActionKind::Continue,
+                tool_name: "log_stats".into(),
+                tool_args: json!({"path": "/var/log/syslog"}),
+                confidence: 0.9,
+                reasoning: Some("Check stats".into()),
+            }),
+            vec![
+                // plan_next_step after step 1: None (end loop)
+                None,
+                // plan_next_step for force_summary: also None
+                // (force_summary_response will use fallback text)
+            ],
+        );
+
+        let engines: Vec<&dyn EdgeInferenceEngine> = vec![&engine];
+        let executor = CommandExecutor::with_agentic(
+            &registry,
+            &can,
+            &logs,
+            &engines,
+            agentic_config(true, 5, 30),
+        );
+
+        let cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "analyze", "admin");
+        let resp = executor.execute(&cmd).await;
+
+        assert_eq!(resp.status, CommandStatus::Completed);
+        let text = resp.response_text.unwrap();
+        assert!(
+            text.contains("Multi-step analysis results"),
+            "fallback summary should be generated, got: {text}"
+        );
+        assert!(resp.steps.is_some());
     }
 
     /// Ollama + Fallback chain: Ollama handles diagnostics, fallback catches greetings.

@@ -252,6 +252,8 @@ impl BedrockEngine {
             tool_name,
             tool_args: call.tool_args,
             confidence: call.confidence,
+
+            reasoning: None,
         }))
     }
 
@@ -269,6 +271,8 @@ impl BedrockEngine {
             tool_name: command,
             tool_args: call.tool_args,
             confidence: call.confidence,
+
+            reasoning: None,
         }))
     }
 
@@ -282,6 +286,8 @@ impl BedrockEngine {
             tool_name: String::new(),
             tool_args: serde_json::json!({ "message": message }),
             confidence: 1.0,
+
+            reasoning: None,
         }))
     }
 }
@@ -298,6 +304,10 @@ struct LlmResponse {
     message: Option<String>,
     #[serde(default)]
     confidence: f64,
+    /// LLM reasoning (agentic loop only — unused on cloud side).
+    #[serde(default)]
+    #[allow(dead_code)]
+    reasoning: Option<String>,
 }
 
 fn default_action() -> String {

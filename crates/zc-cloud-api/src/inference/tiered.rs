@@ -59,6 +59,8 @@ mod tests {
                         tool_name: tool.into(),
                         tool_args: json!({}),
                         confidence: 0.95,
+
+                        reasoning: None,
                     },
                     tier: name.into(),
                 }),

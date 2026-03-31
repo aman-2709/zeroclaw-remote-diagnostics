@@ -58,7 +58,7 @@ pub fn is_recoverable(error: &str) -> bool {
 /// known alternative exists for the failed tool + error combination.
 pub fn rule_based_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
     match ctx.failed_action {
-        ActionKind::Tool => rule_based_tool_recovery(ctx),
+        ActionKind::Tool | ActionKind::Continue => rule_based_tool_recovery(ctx),
         ActionKind::Shell => rule_based_shell_recovery(ctx),
         ActionKind::Reply => None, // replies don't fail in a recoverable way
     }
@@ -100,6 +100,8 @@ fn rule_based_tool_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
                 tool_name: "query_journal".into(),
                 tool_args: args,
                 confidence: 0.85,
+
+                reasoning: None,
             })
         }
 
@@ -110,6 +112,8 @@ fn rule_based_tool_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
                 tool_name: "search_logs".into(),
                 tool_args: json!({"path": "/var/log/syslog", "query": ""}),
                 confidence: 0.85,
+
+                reasoning: None,
             })
         }
 
@@ -120,6 +124,8 @@ fn rule_based_tool_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
                 tool_name: "read_uds_dtcs".into(),
                 tool_args: json!({"ecu": "BCR"}),
                 confidence: 0.80,
+
+                reasoning: None,
             })
         }
 
@@ -137,6 +143,8 @@ fn rule_based_tool_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
                 tool_name: "read_uds_dtcs".into(),
                 tool_args: json!({"ecu": "BCF"}),
                 confidence: 0.75,
+
+                reasoning: None,
             })
         }
 
@@ -147,6 +155,8 @@ fn rule_based_tool_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
                 tool_name: "read_uds_did".into(),
                 tool_args: json!({"ecu": "BCR", "did": 0xF190_u16}),
                 confidence: 0.80,
+
+                reasoning: None,
             })
         }
 
@@ -168,6 +178,8 @@ fn rule_based_shell_recovery(ctx: &RecoveryContext) -> Option<ParsedIntent> {
             tool_name: "cat /sys/class/thermal/thermal_zone0/temp".into(),
             tool_args: json!({}),
             confidence: 0.80,
+
+            reasoning: None,
         });
     }
 

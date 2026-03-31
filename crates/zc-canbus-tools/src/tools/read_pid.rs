@@ -37,12 +37,37 @@ impl CanTool for ReadPid {
         args: serde_json::Value,
         interface: &dyn CanInterface,
     ) -> CanResult<ToolResult> {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(p) => p as u8,
-            None => {
+        let pid = match args.get("pid") {
+            Some(v) if v.is_u64() => v.as_u64().unwrap() as u8,
+            Some(v) if v.is_string() => {
+                let s = v.as_str().unwrap().trim();
+                // Accept hex strings like "0x0C", "0x0c", or decimal strings like "12"
+                if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                    match u8::from_str_radix(hex, 16) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            return Ok(ToolResult::failure(
+                                self.name(),
+                                format!("Invalid hex PID: {s}"),
+                            ));
+                        }
+                    }
+                } else {
+                    match s.parse::<u8>() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            return Ok(ToolResult::failure(
+                                self.name(),
+                                format!("Invalid PID value: {s}"),
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => {
                 return Ok(ToolResult::failure(
                     self.name(),
-                    "Missing required argument: pid (u8)",
+                    "Missing required argument: pid (integer or hex string like \"0x0C\")",
                 ));
             }
         };
@@ -120,5 +145,40 @@ mod tests {
 
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn pid_as_hex_string() {
+        // Accept "0x0C" as RPM PID (12 decimal)
+        let response = CanFrame::new(0x7E8, vec![0x04, 0x41, 0x0C, 0x36, 0xB0, 0, 0, 0]);
+        let mock = MockCanInterface::with_responses(vec![response]);
+
+        let args = serde_json::json!({ "pid": "0x0C" });
+        let result = ReadPid.execute(args, &mock).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.summary.unwrap().contains("3500"));
+    }
+
+    #[tokio::test]
+    async fn pid_as_decimal_string() {
+        let response = CanFrame::new(0x7E8, vec![0x03, 0x41, 0x0D, 0x3C, 0, 0, 0, 0]);
+        let mock = MockCanInterface::with_responses(vec![response]);
+
+        let args = serde_json::json!({ "pid": "13" });
+        let result = ReadPid.execute(args, &mock).await.unwrap();
+
+        assert!(result.success);
+        assert!(result.summary.unwrap().contains("60"));
+    }
+
+    #[tokio::test]
+    async fn pid_invalid_hex_string() {
+        let mock = MockCanInterface::new();
+        let args = serde_json::json!({ "pid": "0xZZ" });
+        let result = ReadPid.execute(args, &mock).await.unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Invalid hex PID"));
     }
 }

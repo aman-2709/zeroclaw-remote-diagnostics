@@ -67,12 +67,20 @@ Use this for greetings, questions about yourself, or anything that doesn't need 
 
 Response format: {"action": "reply", "message": "<your response>", "confidence": 1.0}
 
+## Action 4: continue — Execute a step and keep going (multi-step diagnostics)
+Use this when the user's question requires multiple diagnostic steps.
+
+Response format: {"action": "continue", "tool_name": "...", "tool_args": {...}, "reasoning": "why this step", "confidence": 0.9}
+
+When you have enough information, switch to "reply" with your final synthesis.
+
 ## Rules
 - Respond with ONLY a JSON object (no markdown, no explanation)
 - Be generous in interpretation — operators use casual language
 - For vehicle/diagnostic queries → action: tool
 - For system/OS queries → action: shell
 - For conversation/greetings → action: reply
+- For complex multi-step questions → action: continue
 - When unsure, prefer "reply" with a helpful message over returning nothing"#;
 
 /// Known tool names for validation.
@@ -107,6 +115,9 @@ struct LlmResponse {
     message: Option<String>,
     #[serde(default)]
     confidence: f64,
+    /// LLM reasoning for this step (agentic loop only).
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 fn default_action() -> String {
@@ -217,6 +228,7 @@ impl EdgeBedrockEngine {
         // Route based on action type
         match call.action.as_str() {
             "tool" => validate_tool(call),
+            "continue" => validate_continue(call),
             "shell" => validate_shell(call),
             "reply" => validate_reply(call),
             _ => {
@@ -254,6 +266,8 @@ fn validate_tool(call: LlmResponse) -> Option<ParsedIntent> {
         tool_name,
         tool_args: call.tool_args,
         confidence: call.confidence,
+
+        reasoning: None,
     })
 }
 
@@ -288,6 +302,31 @@ fn validate_shell(call: LlmResponse) -> Option<ParsedIntent> {
         tool_name: sanitized,
         tool_args: call.tool_args,
         confidence: call.confidence,
+
+        reasoning: None,
+    })
+}
+
+/// Validate a continue action (agentic loop step): same as tool but with
+/// ActionKind::Continue and reasoning.
+fn validate_continue(call: LlmResponse) -> Option<ParsedIntent> {
+    let tool_name = call.tool_name?;
+
+    if !KNOWN_TOOLS.contains(&tool_name.as_str()) {
+        tracing::warn!(tool_name = %tool_name, "bedrock returned unknown tool in continue");
+        return None;
+    }
+
+    if call.confidence < MIN_CONFIDENCE {
+        return None;
+    }
+
+    Some(ParsedIntent {
+        action: ActionKind::Continue,
+        tool_name,
+        tool_args: call.tool_args,
+        confidence: call.confidence,
+        reasoning: call.reasoning,
     })
 }
 
@@ -300,6 +339,8 @@ fn validate_reply(call: LlmResponse) -> Option<ParsedIntent> {
         tool_name: String::new(),
         tool_args: serde_json::json!({ "message": message }),
         confidence: 1.0,
+
+        reasoning: None,
     })
 }
 
@@ -333,6 +374,22 @@ impl EdgeInferenceEngine for EdgeBedrockEngine {
         timeout: Duration,
     ) -> Option<ParsedIntent> {
         crate::recovery::bedrock_recovery(ctx, self, timeout).await
+    }
+
+    async fn plan_next_step(&self, context: &str) -> Option<ParsedIntent> {
+        let timeout = Duration::from_secs(self.config.timeout_secs);
+        match tokio::time::timeout(
+            timeout,
+            self.call_converse_with_prompt(crate::inference::AGENTIC_SYSTEM_PROMPT, context),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!("bedrock plan_next_step timed out");
+                None
+            }
+        }
     }
 }
 
@@ -417,6 +474,8 @@ mod tests {
             command: None,
             message: None,
             confidence: 0.9,
+
+            reasoning: None,
         };
         let intent = validate_tool(call).unwrap();
         assert_eq!(intent.action, ActionKind::Tool);
@@ -432,6 +491,8 @@ mod tests {
             command: None,
             message: None,
             confidence: 0.9,
+
+            reasoning: None,
         };
         assert!(validate_tool(call).is_none());
     }
@@ -445,6 +506,8 @@ mod tests {
             command: None,
             message: None,
             confidence: 0.1,
+
+            reasoning: None,
         };
         assert!(validate_tool(call).is_none());
     }
@@ -458,6 +521,8 @@ mod tests {
             command: None,
             message: None,
             confidence: 0.9,
+
+            reasoning: None,
         };
         assert!(validate_tool(call).is_none());
     }
@@ -473,6 +538,8 @@ mod tests {
             command: Some("df -h".into()),
             message: None,
             confidence: 0.95,
+
+            reasoning: None,
         };
         let intent = validate_shell(call).unwrap();
         assert_eq!(intent.action, ActionKind::Shell);
@@ -488,6 +555,8 @@ mod tests {
             command: Some("".into()),
             message: None,
             confidence: 0.9,
+
+            reasoning: None,
         };
         assert!(validate_shell(call).is_none());
     }
@@ -501,6 +570,8 @@ mod tests {
             command: Some("ps aux | grep nginx".into()),
             message: None,
             confidence: 0.9,
+
+            reasoning: None,
         };
         let intent = validate_shell(call).unwrap();
         assert_eq!(intent.tool_name, "ps aux");
@@ -517,6 +588,8 @@ mod tests {
             command: None,
             message: Some("Hello there!".into()),
             confidence: 1.0,
+
+            reasoning: None,
         };
         let intent = validate_reply(call).unwrap();
         assert_eq!(intent.action, ActionKind::Reply);
@@ -533,6 +606,8 @@ mod tests {
             command: None,
             message: Some("   ".into()),
             confidence: 1.0,
+
+            reasoning: None,
         };
         assert!(validate_reply(call).is_none());
     }

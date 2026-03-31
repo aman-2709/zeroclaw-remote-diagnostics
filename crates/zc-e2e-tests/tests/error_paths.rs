@@ -66,6 +66,8 @@ async fn e2e_can_timeout_propagates() {
         tool_name: "read_vin".into(),
         tool_args: json!({}),
         confidence: 0.95,
+
+        reasoning: None,
     });
 
     let agent_resp = h.agent_execute(&envelope).await;
@@ -152,6 +154,7 @@ async fn e2e_response_for_unknown_command() {
         error: None,
         attempts: None,
         engine: None,
+        steps: None,
     };
 
     // REST path: should return 404
@@ -185,6 +188,7 @@ async fn e2e_response_id_mismatch() {
         error: None,
         attempts: None,
         engine: None,
+        steps: None,
     };
 
     // POST to the correct command path, but body has wrong ID
@@ -215,6 +219,8 @@ async fn e2e_unknown_tool_in_intent() {
         tool_name: "self_destruct".into(),
         tool_args: json!({}),
         confidence: 0.99,
+
+        reasoning: None,
     });
 
     let agent_resp = h.agent_execute(&envelope).await;

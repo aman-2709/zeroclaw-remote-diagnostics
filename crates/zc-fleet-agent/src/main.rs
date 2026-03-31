@@ -168,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::select! {
         // Drive the MQTT event loop + dispatch commands
-        () = mqtt_loop::run(eventloop, &channel, &registry, &*can_interface, &log_source, &engines, &shadow_state) => {
+        () = mqtt_loop::run(eventloop, &channel, &registry, &*can_interface, &log_source, &engines, &shadow_state, config.agentic.clone()) => {
             tracing::error!("MQTT loop exited unexpectedly");
         }
         // Publish periodic heartbeats

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import type { CommandEnvelope, WsEvent, DtcCode, AttemptSummary } from '$lib/types';
+	import type { CommandEnvelope, WsEvent, DtcCode, AttemptSummary, StepSummary } from '$lib/types';
 	import { wsStore } from '$lib/stores/websocket.svelte';
 	import { onMount } from 'svelte';
 
@@ -25,6 +25,7 @@
 	let elapsedSecs = $state(0);
 	let responseAttempts = $state<AttemptSummary[] | null>(null);
 	let responseEngine = $state<string | null>(null);
+	let responseSteps = $state<StepSummary[] | null>(null);
 
 	let unsub: (() => void) | null = null;
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -46,13 +47,14 @@
 		if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 	}
 
-	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null, attempts: AttemptSummary[] | null = null, engine: string | null = null) {
+	function handleResponse(text: string | null, data: unknown | null, status: string, errMsg: string | null = null, attempts: AttemptSummary[] | null = null, engine: string | null = null, steps: StepSummary[] | null = null) {
 		cleanup();
 		awaitingResponse = false;
 		responseText = text;
 		responseData = data;
 		responseAttempts = attempts ?? null;
 		responseEngine = engine ?? null;
+		responseSteps = steps ?? null;
 		if (status === 'failed') {
 			responseError = errMsg || 'Command execution failed on device';
 		}
@@ -76,7 +78,7 @@
 		// Strategy 1: WebSocket push (instant)
 		unsub = wsStore.onEvent((event: WsEvent) => {
 			if (event.type === 'command_response' && event.command_id === commandId) {
-				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null, event.attempts ?? null, event.engine ?? null);
+				handleResponse(event.response_text ?? null, event.response_data ?? null, event.status, event.error ?? null, event.attempts ?? null, event.engine ?? null, event.steps ?? null);
 			}
 		});
 
@@ -105,9 +107,10 @@
 				const errMsg = (resp?.error ?? obj.error) as string | null;
 				const attempts = (resp?.attempts ?? obj.attempts) as AttemptSummary[] | null;
 				const engine = (resp?.engine ?? obj.engine) as string | null;
+				const steps = (resp?.steps ?? obj.steps) as StepSummary[] | null;
 
 				if (status && status !== 'pending' && status !== 'sent' && status !== 'received' && status !== 'executing') {
-					handleResponse(text ?? null, data ?? null, status, errMsg ?? null, attempts ?? null, engine ?? null);
+					handleResponse(text ?? null, data ?? null, status, errMsg ?? null, attempts ?? null, engine ?? null, steps ?? null);
 				}
 			} catch {
 				// Poll failed — will retry next interval
@@ -128,6 +131,7 @@
 		responseError = null;
 		responseAttempts = null;
 		responseEngine = null;
+		responseSteps = null;
 
 		try {
 			const envelope = await api.sendCommand({
@@ -153,6 +157,8 @@
 				return 'Shell';
 			case 'reply':
 				return 'Reply';
+			case 'continue':
+				return 'Multi-step';
 			case 'tool':
 			default:
 				return 'Tool';
@@ -165,6 +171,8 @@
 				return 'text-blue-400';
 			case 'reply':
 				return 'text-purple-400';
+			case 'continue':
+				return 'text-amber-400';
 			case 'tool':
 			default:
 				return 'text-success';
@@ -384,7 +392,39 @@
 				</div>
 			{/if}
 
-			{#if responseAttempts && responseAttempts.length > 1}
+			{#if responseSteps && responseSteps.length > 0}
+				<div class="mt-2 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-xs">
+					<span class="font-medium text-amber-400">Reasoning chain ({responseSteps.length} step{responseSteps.length === 1 ? '' : 's'}):</span>
+					<div class="mt-1 space-y-1.5">
+						{#each responseSteps as step}
+							<div class="flex items-start gap-2">
+								<span class="flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] {step.success ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger/70'}">
+									#{step.step}
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono font-medium">{step.tool_name}</span>
+										<span class="text-text-muted">({step.duration_ms}ms)</span>
+										{#if step.success}
+											<span class="text-success">OK</span>
+										{:else}
+											<span class="text-danger/70">FAIL</span>
+										{/if}
+									</div>
+									{#if step.reasoning}
+										<div class="mt-0.5 italic text-text-muted">{step.reasoning}</div>
+									{/if}
+									{#if step.output_summary && step.output_summary.length > 0 && step.output_summary !== '(no output)'}
+										<pre class="mt-0.5 max-h-20 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-text-muted">{step.output_summary.length > 200 ? step.output_summary.slice(0, 200) + '...' : step.output_summary}</pre>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+		{#if responseAttempts && responseAttempts.length > 1}
 				<div class="mt-2 rounded border border-border bg-surface/50 p-2 text-xs">
 					<span class="font-medium text-text-muted">Recovery chain:</span>
 					<div class="mt-1 flex flex-wrap items-center gap-1">

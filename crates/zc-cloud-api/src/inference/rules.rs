@@ -53,6 +53,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                 tool_name: "read_uds_dtcs".into(),
                 tool_args: json!({ "ecu": ecu }),
                 confidence: 0.92,
+
+                reasoning: None,
             });
         }
 
@@ -75,6 +77,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                 tool_name: "read_uds_did".into(),
                 tool_args: json!({ "ecu": ecu }),
                 confidence: 0.90,
+
+                reasoning: None,
             });
         }
 
@@ -87,6 +91,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                     tool_name: "uds_session_control".into(),
                     tool_args: json!({ "ecu": ecu, "tester_present": true }),
                     confidence: 0.90,
+
+                    reasoning: None,
                 });
             }
             let session = if lower.contains("default") {
@@ -99,6 +105,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                 tool_name: "uds_session_control".into(),
                 tool_args: json!({ "ecu": ecu, "session": session }),
                 confidence: 0.90,
+
+                reasoning: None,
             });
         }
     }
@@ -110,6 +118,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "read_uds_dtcs".into(),
             tool_args: json!({ "ecu": "BCR" }),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -132,6 +142,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "read_dtcs".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -151,6 +163,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "read_vin".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -169,6 +183,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "read_freeze".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -195,6 +211,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "can_monitor".into(),
             tool_args: json!({ "duration_secs": duration }),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -214,6 +232,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                 "query": query.unwrap_or("error"),
             }),
             confidence: if query.is_some() { 0.90 } else { 0.75 },
+
+            reasoning: None,
         });
     }
 
@@ -233,6 +253,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "analyze_errors".into(),
             tool_args: json!({ "path": "/var/log/syslog" }),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -246,6 +268,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "log_stats".into(),
             tool_args: json!({ "path": "/var/log/syslog" }),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -269,6 +293,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                 "lines": lines,
             }),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -297,6 +323,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             } else {
                 0.75
             },
+
+            reasoning: None,
         });
     }
 
@@ -312,6 +340,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ip -brief addr".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -322,6 +352,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "cat /sys/class/thermal/thermal_zone0/temp".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -332,6 +364,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "vcgencmd measure_temp".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -350,6 +384,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "sensors".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -363,6 +399,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "df -h".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -373,6 +411,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "free -h".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -383,6 +423,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "uptime".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -402,6 +444,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "dmesg --level=err,warn -T".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -412,6 +456,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "uname -a".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -422,6 +468,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "lscpu".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -441,6 +489,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "top -b -n 1".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -451,6 +501,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ps aux".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -461,6 +513,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "hostname".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -474,6 +528,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "cat /etc/machine-id".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -495,6 +551,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "cat /sys/class/dmi/id/product_name".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -514,6 +572,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "cat /proc/device-tree/model".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -539,6 +599,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
                     • \"show open ports\" — lists active network connections"
             }),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -561,6 +623,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "iw dev".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -581,6 +645,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ping -c 3 8.8.8.8".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -606,6 +672,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "gpspipe -w -n 3".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -626,6 +694,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ip -details link show type can".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -647,6 +717,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ss -tulnp".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -657,6 +729,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "du -sh /var/log".into(),
             tool_args: json!({}),
             confidence: 0.80,
+
+            reasoning: None,
         });
     }
 
@@ -670,6 +744,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "lsblk".into(),
             tool_args: json!({}),
             confidence: 0.90,
+
+            reasoning: None,
         });
     }
 
@@ -683,6 +759,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "date".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -696,6 +774,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "whoami".into(),
             tool_args: json!({}),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 
@@ -709,6 +789,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "systemctl list-units --type=service --state=running --no-pager".into(),
             tool_args: json!({}),
             confidence: 0.85,
+
+            reasoning: None,
         });
     }
 
@@ -719,6 +801,8 @@ fn parse_command(text: &str) -> Option<ParsedIntent> {
             tool_name: "ethtool eth0".into(),
             tool_args: json!({}),
             confidence: 0.80,
+
+            reasoning: None,
         });
     }
 
@@ -759,6 +843,8 @@ fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
                 tool_name: "read_pid".into(),
                 tool_args: json!({ "pid": pid }),
                 confidence: 0.92,
+
+                reasoning: None,
             });
         }
     }
@@ -772,6 +858,8 @@ fn try_parse_pid(text: &str) -> Option<ParsedIntent> {
             tool_name: "read_pid".into(),
             tool_args: json!({ "pid": pid }),
             confidence: 0.95,
+
+            reasoning: None,
         });
     }
 

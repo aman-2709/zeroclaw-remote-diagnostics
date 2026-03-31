@@ -80,6 +80,7 @@ pub async fn ingest_response(
         responded_at: Utc::now(),
         attempts: resp.attempts.clone(),
         engine: resp.engine.clone(),
+        steps: resp.steps.clone(),
     });
 
     Ok(Json(serde_json::json!({ "status": "ok" })))
@@ -146,6 +147,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         };
 
         let response = app
@@ -192,6 +194,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         };
 
         let response = app
@@ -226,6 +229,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         };
 
         app.oneshot(
@@ -262,6 +266,7 @@ mod tests {
             error: None,
             attempts: None,
             engine: None,
+            steps: None,
         };
 
         let response = app
