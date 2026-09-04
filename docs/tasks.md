@@ -264,10 +264,26 @@ recovery instead of returning the raw error. Tiered: rule-based recovery first (
 - [ ] WMI lookup, SAE J287 checksum, pattern matching
 - [ ] Update `read_vin` tool with decoded make/model/year/engine
 
+## Phase 23: Production Hardening and Verification
+- [x] Fix environment-dependent shell executor test with deterministic command-runner injection
+- [x] Add bearer-token API authentication baseline with secure production defaults
+- [x] Restrict CORS and request body sizes via environment configuration
+- [ ] Add production readiness checks and structured operational errors
+- [ ] Add CI quality gates for Rust, frontend, Terraform, and security checks
+- [x] Run and document a complete local MQTT/API/agent/frontend smoke test
+- [ ] Validate actual hardware/cloud-dependent paths separately; do not mark them complete without credentials/hardware
+
+## Phase 24: Production UI System
+- [x] Establish responsive application shell and navigation
+- [x] Add dashboard overview with fleet health metrics and live activity
+- [x] Improve device cards, empty/loading/error states, and accessibility
+- [x] Improve command history and command composer for operational workflows
+- [x] Verify responsive layouts and production frontend build
+
 ## Later
 - [x] Wire SocketCanInterface to real socketcan (conditional on Linux + config.can_interface, graceful fallback to mock)
 - [ ] Advanced DTC features: pending (0x07), permanent (0x0A), status byte, I/M readiness, DTC snapshots
 - [ ] Fleet-wide DTC aggregation, trend analysis, AI interpretation
 - [ ] DBC file parser for CAN signal-level decode
-- [ ] REST API auth middleware (JWT or API keys)
+- [ ] REST API JWT/RBAC and fleet-scoped authorization middleware
 - [ ] Deployment pipeline (Lambda handler, CI/CD)
