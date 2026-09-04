@@ -9,20 +9,75 @@ pub mod shadows;
 pub mod telemetry;
 pub mod ws;
 
+use std::sync::Arc;
+
 use axum::Router;
+use axum::extract::Request;
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
+use subtle::ConstantTimeEq;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
 
-/// Build the Axum router with all routes and middleware.
+/// Security and request handling settings applied to the API router.
+#[derive(Debug, Clone)]
+pub struct RouterConfig {
+    /// Optional bearer token protecting all `/api/v1` routes.
+    pub api_auth_token: Option<String>,
+    /// Allowed browser origins. Empty means permissive local-development mode.
+    pub cors_origins: Vec<String>,
+    /// Maximum accepted request body size.
+    pub max_body_bytes: usize,
+}
+
+impl Default for RouterConfig {
+    fn default() -> Self {
+        Self {
+            api_auth_token: None,
+            cors_origins: vec![],
+            max_body_bytes: 1024 * 1024,
+        }
+    }
+}
+
+/// Build the Axum router with development-compatible defaults.
+///
+/// The production binary passes an explicit `RouterConfig`; keeping this
+/// wrapper preserves the lightweight unauthenticated router used by unit tests.
 pub fn build_router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    build_router_with_config(state, RouterConfig::default())
+}
+
+/// Build the Axum router with production security and request limits.
+pub fn build_router_with_config(state: AppState, config: RouterConfig) -> Router {
+    let cors = if config.cors_origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+    } else {
+        let origins = config
+            .cors_origins
+            .iter()
+            .filter_map(|origin| match origin.parse::<HeaderValue>() {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    tracing::warn!(origin, %error, "ignoring invalid CORS origin");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+    };
 
     let api = Router::new()
         // Device endpoints
@@ -54,7 +109,40 @@ pub fn build_router(state: AppState) -> Router {
         // Heartbeat ingestion
         .route("/heartbeat", post(heartbeat::ingest_heartbeat))
         // WebSocket endpoint
-        .route("/ws", get(ws::ws_handler));
+        .route("/ws", get(ws::ws_handler))
+        .layer(RequestBodyLimitLayer::new(config.max_body_bytes));
+
+    let api = if let Some(token) = config.api_auth_token {
+        let expected = Arc::<[u8]>::from(token.into_bytes());
+        api.layer(middleware::from_fn(move |request: Request, next: Next| {
+            let expected = Arc::clone(&expected);
+            async move {
+                let authorized = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.strip_prefix("Bearer "))
+                    .map(|provided| provided.as_bytes().ct_eq(expected.as_ref()).into())
+                    .unwrap_or(false);
+
+                if !authorized {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        [(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))],
+                        axum::Json(serde_json::json!({
+                            "error": "missing or invalid bearer token",
+                            "status": StatusCode::UNAUTHORIZED.as_u16(),
+                        })),
+                    )
+                        .into_response();
+                }
+
+                next.run(request).await
+            }
+        }))
+    } else {
+        api
+    };
 
     Router::new()
         .route("/health", get(health::health))
@@ -229,5 +317,75 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn protected_api_rejects_missing_and_invalid_bearer_tokens() {
+        let security = RouterConfig {
+            api_auth_token: Some("test-token-with-at-least-32-characters".into()),
+            cors_origins: vec![],
+            max_body_bytes: 1024,
+        };
+        let protected = build_router_with_config(AppState::with_sample_data(), security.clone());
+
+        let missing = protected
+            .clone()
+            .oneshot(Request::get("/api/v1/devices").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = protected
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/devices")
+                    .header("authorization", "Bearer wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+
+        let valid = protected
+            .oneshot(
+                Request::get("/api/v1/devices")
+                    .header(
+                        "authorization",
+                        "Bearer test-token-with-at-least-32-characters",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(valid.status(), StatusCode::OK);
+
+        let health = build_router_with_config(AppState::with_sample_data(), security)
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn request_body_limit_returns_payload_too_large() {
+        let app = build_router_with_config(
+            AppState::with_sample_data(),
+            RouterConfig {
+                max_body_bytes: 32,
+                ..RouterConfig::default()
+            },
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/commands")
+                    .header("content-type", "application/json")
+                    .body(Body::from(vec![b'x'; 128]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

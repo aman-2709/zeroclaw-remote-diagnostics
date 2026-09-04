@@ -24,6 +24,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zc-cloud-api starting");
 
     let config = ApiConfig::from_env();
+    config
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid API configuration: {error}"))?;
 
     // Build the inference engine — local (rule-based), bedrock (cloud LLM), or tiered (local-first + bedrock fallback).
     let inference: Arc<dyn InferenceEngine> = match config.inference_engine.as_str() {
@@ -166,7 +169,14 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("mqtt bridge spawned");
     }
 
-    let app = routes::build_router(state);
+    let app = routes::build_router_with_config(
+        state,
+        routes::RouterConfig {
+            api_auth_token: config.api_auth_token.clone(),
+            cors_origins: config.cors_origins.clone(),
+            max_body_bytes: config.max_body_bytes,
+        },
+    );
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;
