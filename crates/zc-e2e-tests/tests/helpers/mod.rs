@@ -23,6 +23,7 @@ use zc_mqtt_channel::MockChannel;
 use zc_protocol::commands::CommandEnvelope;
 
 /// End-to-end test harness wiring cloud API + fleet agent via MockChannel.
+#[allow(dead_code)]
 pub struct TestHarness {
     /// Cloud API application state (in-memory, no DB).
     pub cloud_state: AppState,
@@ -40,6 +41,7 @@ pub struct TestHarness {
     pub event_rx: broadcast::Receiver<WsEvent>,
 }
 
+#[allow(dead_code)]
 impl TestHarness {
     /// Create a new harness with sample devices (rpi-001, rpi-002, sbc-010).
     pub fn with_sample_data() -> Self {

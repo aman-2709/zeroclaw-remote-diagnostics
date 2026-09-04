@@ -444,11 +444,13 @@ mod tests {
         let logs = MockLogSource::with_syslog_sample();
         let executor = make_executor(&registry, &can, &logs);
 
-        // `ip -details link show type can` returns empty on machines without CAN interfaces
-        let mut cmd = CommandEnvelope::new("fleet-alpha", "rpi-001", "show CAN interface", "admin");
+        // Use a deterministic empty-output command rather than depending on
+        // whether the test host has a CAN interface configured.
+        let mut cmd =
+            CommandEnvelope::new("fleet-alpha", "rpi-001", "show an empty result", "admin");
         cmd.parsed_intent = Some(ParsedIntent {
             action: ActionKind::Shell,
-            tool_name: "ip -details link show type can".into(),
+            tool_name: "cat /dev/null".into(),
             tool_args: json!({}),
             confidence: 0.85,
         });

@@ -36,7 +36,7 @@ async fn e2e_all_thirteen_tools_parseable() {
     ];
 
     for (command_text, expected_tool) in &tool_commands {
-        let (status, cmd_json) = h
+        let (status, _cmd_json) = h
             .send_command("rpi-001", "fleet-alpha", command_text, "admin")
             .await;
         assert_eq!(
@@ -166,11 +166,9 @@ async fn e2e_ollama_fallback_on_agent() {
 async fn e2e_inference_tier_tracked() {
     let h = TestHarness::with_sample_data();
 
-    let (_, cmd_json) = h
+    let (_, _cmd_json) = h
         .send_command("rpi-001", "fleet-alpha", "read DTCs", "admin")
         .await;
-    let cmd_id: Uuid = cmd_json["id"].as_str().unwrap().parse().unwrap();
-
     let envelope: CommandEnvelope = serde_json::from_slice(&h.mqtt.published()[0].payload).unwrap();
 
     // Cloud inference should have set a tier

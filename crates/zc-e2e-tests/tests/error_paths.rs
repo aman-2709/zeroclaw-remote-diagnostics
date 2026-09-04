@@ -4,7 +4,6 @@ mod helpers;
 
 use axum::http::StatusCode;
 use chrono::Utc;
-use http_body_util::BodyExt;
 use serde_json::json;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -33,7 +32,7 @@ async fn e2e_command_to_unknown_device() {
 async fn e2e_unrecognized_command_no_intent() {
     let h = TestHarness::with_sample_data();
 
-    let (status, cmd_json) = h
+    let (status, _cmd_json) = h
         .send_command("rpi-001", "fleet-alpha", "bake a pizza", "admin")
         .await;
     assert_eq!(status, StatusCode::OK);
@@ -187,7 +186,7 @@ async fn e2e_unknown_tool_in_intent() {
 async fn e2e_empty_command_text() {
     let h = TestHarness::with_sample_data();
 
-    let (status, cmd_json) = h.send_command("rpi-001", "fleet-alpha", "", "admin").await;
+    let (status, _cmd_json) = h.send_command("rpi-001", "fleet-alpha", "", "admin").await;
     assert_eq!(status, StatusCode::OK);
 
     // The envelope is still created and published

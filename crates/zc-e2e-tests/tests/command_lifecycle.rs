@@ -4,12 +4,10 @@
 mod helpers;
 
 use axum::http::StatusCode;
-use chrono::Utc;
-use serde_json::json;
 use uuid::Uuid;
 
 use helpers::TestHarness;
-use zc_protocol::commands::{CommandStatus, InferenceTier, ParsedIntent};
+use zc_protocol::commands::CommandStatus;
 
 /// Full lifecycle: send "search logs" → cloud inference → agent executes → response ingested.
 #[tokio::test]
