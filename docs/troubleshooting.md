@@ -133,7 +133,7 @@ Wait for: `"zc-fleet-agent ready"`
 
 ```bash
 cd frontend
-API_URL=http://localhost:3000 pnpm dev -- --port 5174
+API_URL=http://localhost:3000 pnpm exec vite --host 127.0.0.1 --port 5174
 ```
 
 Wait for: `VITE ready in ... ms` then open http://localhost:5174
@@ -477,7 +477,7 @@ ss -tlnp | grep 5174
 kill <pid>
 ```
 
-Then restart with `pnpm dev -- --port 5174`.
+Then restart with `pnpm exec vite --host 127.0.0.1 --port 5174`.
 
 ### Command shows "dispatched" but no response arrives
 

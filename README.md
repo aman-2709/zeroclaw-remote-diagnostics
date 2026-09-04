@@ -140,6 +140,8 @@ cargo fmt --all -- --check   # check only
 
 ### Local Dev (Full Loop)
 
+The local test stack explicitly sets `ALLOW_INSECURE=true` because it uses plaintext MQTT and no API token. Do not carry that setting into a deployed environment. For a network-exposed API, set a random `API_AUTH_TOKEN` of at least 32 characters, configure `CORS_ORIGINS`, enable MQTT TLS, and use a reverse proxy or an authenticated frontend for WebSocket access.
+
 Requires Mosquitto MQTT broker running on `localhost:1883`.
 
 ```bash
@@ -161,7 +163,7 @@ cargo run -p zc-cloud-api
 RUST_LOG=info cargo run -p zc-fleet-agent -- dev/agent.toml
 
 # Terminal 4: Frontend dev server
-cd frontend && pnpm install && pnpm dev -- --port 5174
+cd frontend && pnpm install && API_URL=http://localhost:3002 pnpm exec vite --host 127.0.0.1 --port 5174
 ```
 
 To use Bedrock cloud inference instead, set `INFERENCE_ENGINE=bedrock` plus AWS credentials in Terminal 2 (see [Bedrock Cloud Inference](#bedrock-cloud-inference) below).

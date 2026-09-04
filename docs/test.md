@@ -44,7 +44,7 @@ RUST_LOG=info \
 cargo run -p zc-cloud-api
 ```
 
-Wait for: `"listening","addr":"0.0.0.0:3002"`
+Wait for: `"listening","addr":"127.0.0.1:3002"`
 
 ### Terminal 2 — Cloud API (with Bedrock fallback)
 
@@ -274,7 +274,7 @@ Open a **4th terminal**:
 
 ```bash
 cd frontend
-API_URL=http://localhost:3002 pnpm dev -- --port 5174
+API_URL=http://localhost:3002 pnpm exec vite --host 127.0.0.1 --port 5174
 ```
 
 Open http://localhost:5174 in your browser. The frontend proxies all `/api` and WebSocket requests to the cloud API on :3002.
