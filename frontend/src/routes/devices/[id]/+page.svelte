@@ -150,9 +150,9 @@
 	];
 </script>
 
-<div class="space-y-6">
+<div class="space-y-7">
 	<div>
-		<a href="/" class="text-sm text-text-muted hover:text-text">&larr; Back to devices</a>
+		<a href="/" class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted transition hover:text-primary"><span aria-hidden="true">←</span> Back to fleet</a>
 	</div>
 
 	{#if loading}
@@ -163,7 +163,7 @@
 		</div>
 	{:else if device}
 		<!-- Header -->
-		<div class="flex items-start justify-between">
+		<div class="surface-card flex flex-col justify-between gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
 			<div>
 				<div class="flex items-center gap-3">
 					<h1 class="font-mono text-2xl font-bold">{device.device_id}</h1>
@@ -177,11 +177,11 @@
 		</div>
 
 		<!-- Tab navigation -->
-		<div class="flex gap-1 border-b border-border">
+		<div class="flex gap-1 overflow-x-auto border-b border-border">
 			{#each TABS as tab}
 				<button
 					onclick={() => (activeTab = tab.key)}
-					class="border-b-2 px-4 py-2 text-sm font-medium transition {activeTab === tab.key ? 'border-primary text-primary' : 'border-transparent text-text-muted hover:text-text'}"
+					class="border-b-2 px-4 py-3 text-sm font-semibold transition {activeTab === tab.key ? 'border-primary text-primary' : 'border-transparent text-text-muted hover:border-slate-300 hover:text-text'}"
 				>
 					{tab.label}
 				</button>
@@ -193,15 +193,15 @@
 			<div class="space-y-6">
 				<!-- Device info cards -->
 				<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">Hardware</dt>
 						<dd class="mt-1 font-mono text-sm">{formatHardwareType(device.hardware_type)}</dd>
 					</div>
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">VIN</dt>
 						<dd class="mt-1 font-mono text-sm">{device.vin ?? 'Not available'}</dd>
 					</div>
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">Last Heartbeat</dt>
 						<dd class="mt-1 text-sm">
 							{#if lastHeartbeat}
@@ -212,15 +212,15 @@
 							{/if}
 						</dd>
 					</div>
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">Certificate</dt>
 						<dd class="mt-1 font-mono text-sm">{device.certificate_id ?? 'None'}</dd>
 					</div>
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">Machine ID</dt>
 						<dd class="mt-1 font-mono text-sm">{typeof device.metadata?.machine_id === 'string' ? device.metadata.machine_id : 'Not available'}</dd>
 					</div>
-					<div class="rounded-lg border border-border bg-white p-4">
+					<div class="surface-card p-5">
 						<dt class="text-xs font-medium uppercase text-text-muted">Created</dt>
 						<dd class="mt-1 text-sm">{new Date(device.created_at).toLocaleDateString()}</dd>
 					</div>
@@ -243,7 +243,7 @@
 
 		{:else if activeTab === 'commands'}
 			<div class="space-y-6">
-				<section class="rounded-lg border border-border bg-white p-6">
+				<section class="surface-card p-5 sm:p-6">
 					<h2 class="mb-4 text-lg font-semibold">Command Interface</h2>
 					<CommandForm
 						deviceId={device.device_id}

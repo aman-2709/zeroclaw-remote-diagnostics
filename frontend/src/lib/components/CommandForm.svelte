@@ -228,24 +228,22 @@
 	}
 </script>
 
-<form onsubmit={handleSubmit} class="space-y-3">
+<form onsubmit={handleSubmit} class="space-y-5">
 	<div>
-		<label for="command-input" class="block text-sm font-medium text-text">
-			Send Command to <span class="font-mono">{deviceId || '...'}</span>
-		</label>
-		<div class="mt-1 flex gap-2">
+		<div class="mb-3 flex items-center justify-between gap-3"><label for="command-input" class="text-sm font-bold text-text">Run a diagnostic</label><span class="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700">Read-only tools</span></div>
+		<div class="flex flex-col gap-2 sm:flex-row">
 			<input
 				id="command-input"
 				type="text"
 				bind:value={command}
 				placeholder="e.g. read DTCs, what's the CPU temp, how are you?"
 				disabled={loading || !deviceId}
-				class="flex-1 rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:opacity-50"
+				class="min-w-0 flex-1 rounded-lg border border-border bg-slate-50 px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
 			/>
 			<button
 				type="submit"
 				disabled={loading || !command.trim() || !deviceId}
-				class="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50"
+				class="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-3 text-sm font-bold text-white shadow-sm shadow-indigo-200 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-24"
 			>
 				{loading ? 'Sending...' : 'Send'}
 			</button>

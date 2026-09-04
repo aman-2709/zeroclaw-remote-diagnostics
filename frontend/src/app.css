@@ -1,14 +1,70 @@
 @import 'tailwindcss';
 
 @theme {
-	--color-primary: #2563eb;
-	--color-primary-dark: #1d4ed8;
-	--color-success: #16a34a;
-	--color-warning: #d97706;
-	--color-danger: #dc2626;
-	--color-surface: #f8fafc;
-	--color-surface-dark: #1e293b;
-	--color-text: #0f172a;
-	--color-text-muted: #64748b;
-	--color-border: #e2e8f0;
+	--color-primary: #4f46e5;
+	--color-primary-dark: #4338ca;
+	--color-success: #0f9f6e;
+	--color-warning: #c47b16;
+	--color-danger: #d14b55;
+	--color-surface: #f6f7fb;
+	--color-surface-dark: #18202f;
+	--color-text: #172033;
+	--color-text-muted: #667085;
+	--color-border: #e5e7ef;
+	--font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+}
+
+:root {
+	font-family: var(--font-sans);
+	color: #172033;
+	background: #f6f7fb;
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+}
+
+html { background: #f6f7fb; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, textarea, select { font: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+	outline: 3px solid rgb(79 70 229 / 25%);
+	outline-offset: 2px;
+}
+
+.app-shell { min-height: 100vh; background: #f6f7fb; }
+.app-sidebar {
+	background: #141a27;
+	color: #c8cfdd;
+	width: 248px;
+	flex: 0 0 248px;
+}
+.sidebar-link {
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	border-radius: 9px;
+	padding: 10px 12px;
+	font-size: 13px;
+	font-weight: 600;
+	color: #9da8ba;
+	transition: background .15s ease, color .15s ease;
+}
+.sidebar-link:hover { background: rgb(255 255 255 / 7%); color: #fff; }
+.sidebar-link.active { background: #3730a3; color: #fff; box-shadow: 0 5px 16px rgb(7 10 24 / 20%); }
+.sidebar-section { margin: 26px 0 8px; padding: 0 12px; color: #647084; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.surface-card { border: 1px solid #e5e7ef; border-radius: 14px; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 3%); }
+.metric-card { position: relative; overflow: hidden; border: 1px solid #e5e7ef; border-radius: 14px; background: #fff; padding: 18px; box-shadow: 0 1px 2px rgb(16 24 40 / 3%); }
+.metric-card::after { position: absolute; right: -22px; bottom: -34px; width: 88px; height: 88px; border-radius: 999px; background: rgb(79 70 229 / 5%); content: ''; }
+.eyebrow { color: #667085; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.table-row { transition: background .15s ease; }
+.table-row:hover { background: #fafbff; }
+
+@media (max-width: 900px) {
+	.app-sidebar { width: 72px; flex-basis: 72px; }
+	.app-sidebar .brand-label, .app-sidebar .sidebar-section, .app-sidebar .sidebar-link span { display: none; }
+	.app-sidebar .sidebar-link { justify-content: center; padding: 11px; }
+	.app-sidebar .sidebar-link svg { width: 19px; height: 19px; }
+}
+@media (max-width: 640px) {
+	.app-sidebar { display: none; }
 }
